@@ -1,11 +1,28 @@
 """Agent schemas."""
 
 from enum import StrEnum
+import re
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 MAX_AGENT_MESSAGE_LENGTH = 2000
+SERVICE_LEAK_FALLBACK_MESSAGE = "Я тебя поняла. Можешь чуть уточнить, что именно ты хочешь?"
+SERVICE_LEAK_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bjson\b",
+        r"\bvalid\b",
+        r"\bschema\b",
+        r"\btool\b",
+        r"\baction\b",
+        r"валидн",
+        r"схем",
+        r"формат",
+        r"исправленн",
+        r"служебн",
+    )
+)
 
 
 class AgentActionType(StrEnum):
@@ -75,6 +92,8 @@ class AgentDecision(BaseModel):
             text = str(item).strip()
             if not text:
                 continue
+            if _looks_like_service_leak(text):
+                text = SERVICE_LEAK_FALLBACK_MESSAGE
             messages.append(text[:MAX_AGENT_MESSAGE_LENGTH])
         return messages
 
@@ -90,3 +109,8 @@ class AgentDecision(BaseModel):
     def normalized_messages(self) -> list[str]:
         """Return cleaned messages ready for Telegram."""
         return [message.strip()[:MAX_AGENT_MESSAGE_LENGTH] for message in self.messages if message.strip()]
+
+
+def _looks_like_service_leak(text: str) -> bool:
+    """Return whether a user-visible message leaked internal JSON/tool instructions."""
+    return any(pattern.search(text) for pattern in SERVICE_LEAK_PATTERNS)

@@ -109,4 +109,4 @@ async def test_decide_uses_fallback_after_two_parse_failures() -> None:
     decision = await make_orchestrator(llm).decide([], {"event_type": "test"})
 
     assert decision.action == AgentActionType.SEND_MESSAGE
-    assert decision.normalized_messages() == ["Я немного запутался с форматом ответа. Напиши ещё раз."]
+    assert decision.normalized_messages() == ["Я немного запуталась. Напиши ещё раз, пожалуйста."]

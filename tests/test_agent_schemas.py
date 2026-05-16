@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.agent.schemas import AgentActionType, AgentDecision
+from app.agent.schemas import AgentActionType, AgentDecision, SERVICE_LEAK_FALLBACK_MESSAGE
 
 
 def test_valid_send_message_decision() -> None:
@@ -44,3 +44,21 @@ def test_common_unknown_emotion_alias_is_normalized() -> None:
     decision = AgentDecision(action="send_message", messages=["ok"], emotion="helpful")
 
     assert decision.emotion == "caring"
+
+
+def test_service_json_leak_message_is_replaced() -> None:
+    decision = AgentDecision(
+        action="send_message",
+        messages=["Here is the corrected valid JSON schema response"],
+    )
+
+    assert decision.normalized_messages() == [SERVICE_LEAK_FALLBACK_MESSAGE]
+
+
+def test_russian_service_json_leak_message_is_replaced() -> None:
+    decision = AgentDecision(
+        action="send_message",
+        messages=["Вот исправленный валидный JSON, как вы просили"],
+    )
+
+    assert decision.normalized_messages() == [SERVICE_LEAK_FALLBACK_MESSAGE]

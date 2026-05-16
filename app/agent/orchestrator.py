@@ -15,7 +15,7 @@ EMPTY_REPLY_FALLBACK = "Я задумался и не смог нормальн�
 FALLBACK_DECISION = AgentDecision(
     thought="LLM returned invalid JSON twice.",
     action=AgentActionType.SEND_MESSAGE,
-    messages=["Я немного запутался с форматом ответа. Напиши ещё раз."],
+    messages=["Я немного запуталась. Напиши ещё раз, пожалуйста."],
     tool_input={},
     emotion=AgentEmotion.NEUTRAL,
     delay_seconds=0,
@@ -164,7 +164,8 @@ class AgentOrchestrator:
             f"Имя персонажа: {bot_settings.character_name}\n"
             f"Описание персонажа: {bot_settings.character_description}\n"
             f"Стиль общения: {bot_settings.personality_style}\n"
-            "Следуй этим настройкам при выборе сообщений в JSON."
+            "Следуй этим настройкам при выборе сообщений в JSON.\n"
+            "В поле messages пиши только обычную реплику пользователю, без упоминаний JSON, схемы, формата или внутренней логики."
         )
 
     @staticmethod
