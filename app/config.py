@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     debug: bool = True
     log_level: str = "INFO"
+    auto_create_tables: bool = False
 
     telegram_bot_token: str | None = None
 
@@ -35,6 +36,17 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./data/bot.db"
 
+    default_character_name: str = "Kuni"
+    default_character_description: str = "AI companion with natural Telegram behavior"
+    default_personality_style: str = "warm, playful, concise"
+
+    default_proactive_enabled: bool = False
+    default_proactive_min_interval_minutes: int = 60
+    default_proactive_max_interval_minutes: int = 180
+
+    message_history_limit: int = 50
+    max_stored_message_length: int = 8000
+
     vector_store_type: str = "chroma"
     vector_store_path: str = "./data/chroma"
     rag_top_k: int = 5
@@ -43,6 +55,8 @@ class Settings(BaseSettings):
 
     comfyui_base_url: str = "http://127.0.0.1:8188"
     generated_images_dir: str = "./data/generated_images"
+    media_storage_dir: str = "./data/media"
+    diary_enabled: bool = False
 
     proactive_enabled: bool = False
     proactive_min_interval_minutes: int = 60

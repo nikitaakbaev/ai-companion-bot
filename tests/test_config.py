@@ -16,3 +16,9 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.llm_timeout_seconds == 120
     assert settings.llm_temperature == 0.7
     assert settings.llm_max_tokens == 800
+    assert settings.auto_create_tables is False
+    assert settings.default_character_name == "Kuni"
+    assert settings.message_history_limit == 50
+    assert settings.max_stored_message_length == 8000
+    assert settings.media_storage_dir == "./data/media"
+    assert settings.diary_enabled is False

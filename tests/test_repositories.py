@@ -1,4 +1,3 @@
-import pytest
 from sqlalchemy import select
 
 from app.database.models import Chat, Message, User
@@ -9,20 +8,6 @@ from app.database.repositories import (
     save_agent_action,
     save_message,
 )
-from app.database.session import create_engine_from_url, create_session_factory, init_db
-
-
-@pytest.fixture
-async def session_factory():
-    engine = create_engine_from_url("sqlite+aiosqlite:///:memory:")
-    await init_db(engine)
-    factory = create_session_factory(engine)
-    try:
-        yield factory
-    finally:
-        await engine.dispose()
-
-
 async def test_get_or_create_user_creates_user(session_factory) -> None:
     async with session_factory() as session:
         user = await get_or_create_user(

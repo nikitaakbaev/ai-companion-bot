@@ -33,7 +33,7 @@ async def main() -> None:
 
     engine = create_engine_from_url(settings.database_url)
     session_factory = create_session_factory(engine)
-    await init_db(engine)
+    await init_db(engine, settings.auto_create_tables)
 
     if not settings.telegram_bot_token:
         logger.warning("TELEGRAM_BOT_TOKEN is not set. Telegram bot is not started.")

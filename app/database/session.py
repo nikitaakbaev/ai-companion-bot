@@ -23,8 +23,12 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def init_db(engine: AsyncEngine) -> None:
-    """Create database tables for the MVP."""
-    logger.info("Creating database tables if they do not exist")
+async def init_db(engine: AsyncEngine, auto_create_tables: bool) -> None:
+    """Create database tables when explicitly enabled for development/tests."""
+    if not auto_create_tables:
+        logger.info("AUTO_CREATE_TABLES=false. Skipping Base.metadata.create_all.")
+        return
+
+    logger.info("AUTO_CREATE_TABLES=true. Creating database tables if they do not exist")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

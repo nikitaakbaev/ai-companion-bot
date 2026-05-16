@@ -8,7 +8,7 @@ from app.agent.json_parser import AgentDecisionParseError, parse_agent_decision
 from app.agent.prompts import AGENT_SYSTEM_PROMPT, BASIC_SYSTEM_PROMPT, JSON_REPAIR_PROMPT
 from app.agent.schemas import AgentActionType, AgentDecision, AgentEmotion
 from app.agent.tools import available_tools
-from app.database.models import Message
+from app.database.models import AgentState, BotSettings, Message
 from app.llm.client import ChatMessage, LLMClient
 
 EMPTY_REPLY_FALLBACK = "Я задумался и не смог нормально сформулировать ответ. Попробуй написать ещё раз."
@@ -64,9 +64,16 @@ class AgentOrchestrator:
         self,
         recent_messages: list[Message],
         event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
     ) -> AgentDecision:
         """Ask the LLM for a structured JSON decision."""
-        llm_messages = self._build_agent_messages(recent_messages, event_context)
+        llm_messages = self._build_agent_messages(
+            recent_messages,
+            event_context,
+            bot_settings,
+            agent_state,
+        )
         response = await self.llm_client.generate_text(
             messages=llm_messages,
             temperature=self.temperature,
@@ -109,12 +116,25 @@ class AgentOrchestrator:
         self,
         recent_messages: list[Message],
         event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
     ) -> list[ChatMessage]:
         enriched_context = {
             **event_context,
             "current_time": datetime.now(UTC).isoformat(),
             "available_tools": available_tools(),
         }
+        if bot_settings is not None:
+            enriched_context["character"] = {
+                "name": bot_settings.character_name,
+                "description": bot_settings.character_description,
+                "personality_style": bot_settings.personality_style,
+            }
+        if agent_state is not None:
+            enriched_context["agent_state"] = {
+                "last_emotion": agent_state.last_emotion,
+                "last_action_type": agent_state.last_action_type,
+            }
         messages = [ChatMessage(role="system", content=AGENT_SYSTEM_PROMPT)]
         for message in recent_messages[-self.max_context_messages :]:
             if message.role not in {"user", "assistant"} or not message.text:
