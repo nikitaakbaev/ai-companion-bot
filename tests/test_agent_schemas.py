@@ -39,3 +39,8 @@ def test_long_message_is_truncated() -> None:
 
     assert len(decision.normalized_messages()[0]) == 2000
 
+
+def test_common_unknown_emotion_alias_is_normalized() -> None:
+    decision = AgentDecision(action="send_message", messages=["ok"], emotion="helpful")
+
+    assert decision.emotion == "caring"

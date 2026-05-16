@@ -41,6 +41,24 @@ class AgentDecision(BaseModel):
     emotion: AgentEmotion = AgentEmotion.NEUTRAL
     delay_seconds: int = Field(default=0, ge=0, le=60)
 
+    @field_validator("emotion", mode="before")
+    @classmethod
+    def normalize_emotion(cls, value: object) -> AgentEmotion | str:
+        """Map common model-invented emotion labels to the supported set."""
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip().lower()
+        aliases = {
+            "helpful": AgentEmotion.CARING,
+            "friendly": AgentEmotion.HAPPY,
+            "kind": AgentEmotion.CARING,
+            "supportive": AgentEmotion.CARING,
+            "calm": AgentEmotion.NEUTRAL,
+            "curious": AgentEmotion.PLAYFUL,
+        }
+        return aliases.get(normalized, normalized)
+
     @field_validator("messages", mode="before")
     @classmethod
     def clean_messages(cls, value: object) -> list[str]:

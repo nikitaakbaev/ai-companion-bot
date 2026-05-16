@@ -79,7 +79,7 @@ class AgentOrchestrator:
             self._log_decision(decision)
             return decision
         except AgentDecisionParseError:
-            logger.exception("Failed to parse agent decision; attempting JSON repair")
+            logger.warning("Failed to parse agent decision; attempting JSON repair")
 
         repair_response = await self.llm_client.generate_text(
             messages=[
@@ -102,7 +102,7 @@ class AgentOrchestrator:
             self._log_decision(decision)
             return decision
         except AgentDecisionParseError:
-            logger.exception("Failed to parse repaired agent decision; using fallback")
+            logger.warning("Failed to parse repaired agent decision; using fallback")
             return FALLBACK_DECISION.model_copy(deep=True)
 
     def _build_agent_messages(
