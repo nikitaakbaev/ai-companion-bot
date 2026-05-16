@@ -26,9 +26,17 @@ class ToolExecutionResult(BaseModel):
 class ToolExecutor:
     """Executes structured agent actions."""
 
-    def __init__(self, bot: Bot, diary_service: DiaryService | None = None) -> None:
+    def __init__(
+        self,
+        bot: Bot,
+        diary_service: DiaryService | None = None,
+        max_delay_seconds: float = 0.5,
+        typing_seconds: float = 0.2,
+    ) -> None:
         self.bot = bot
         self.diary_service = diary_service
+        self.max_delay_seconds = max_delay_seconds
+        self.typing_seconds = typing_seconds
 
     async def execute(
         self,
@@ -66,8 +74,8 @@ class ToolExecutor:
         sent_messages: list[dict[str, Any]] = []
         for text in decision.normalized_messages():
             if decision.delay_seconds > 0:
-                await asyncio.sleep(decision.delay_seconds)
-            await send_typing(self.bot, telegram_chat_id, seconds=min(max(len(text) / 40, 0.3), 2.0))
+                await asyncio.sleep(min(decision.delay_seconds, self.max_delay_seconds))
+            await send_typing(self.bot, telegram_chat_id, seconds=self.typing_seconds)
             message = await self.bot.send_message(chat_id=telegram_chat_id, text=text)
             sent_messages.append({"message_id": message.message_id, "text": text})
 

@@ -16,6 +16,11 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.llm_timeout_seconds == 120
     assert settings.llm_temperature == 0.7
     assert settings.llm_max_tokens == 800
+    assert settings.agent_temperature == 0.2
+    assert settings.agent_max_tokens == 2048
+    assert settings.agent_context_messages == 8
+    assert settings.agent_max_delay_seconds == 0.5
+    assert settings.agent_typing_seconds == 0.2
     assert settings.auto_create_tables is False
     assert settings.default_character_name == "Kuni"
     assert settings.message_history_limit == 50

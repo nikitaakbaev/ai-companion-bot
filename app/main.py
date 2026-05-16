@@ -52,9 +52,9 @@ async def main() -> None:
     )
     orchestrator = AgentOrchestrator(
         llm_client=llm_client,
-        max_context_messages=settings.max_context_messages,
-        temperature=settings.llm_temperature,
-        max_tokens=settings.llm_max_tokens,
+        max_context_messages=settings.agent_context_messages,
+        temperature=settings.agent_temperature,
+        max_tokens=settings.agent_max_tokens,
     )
     diary_model = settings.diary_reflection_model or settings.llm_model
     diary_llm_client = (
@@ -83,7 +83,12 @@ async def main() -> None:
     )
 
     bot = Bot(token=settings.telegram_bot_token, session=AiohttpSession(timeout=120))
-    tool_executor = ToolExecutor(bot=bot, diary_service=diary_service)
+    tool_executor = ToolExecutor(
+        bot=bot,
+        diary_service=diary_service,
+        max_delay_seconds=settings.agent_max_delay_seconds,
+        typing_seconds=settings.agent_typing_seconds,
+    )
     dp = Dispatcher()
     dp.include_router(router)
     dp["session_factory"] = session_factory

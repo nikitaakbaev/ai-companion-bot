@@ -119,10 +119,13 @@ class AgentOrchestrator:
         bot_settings: BotSettings | None = None,
         agent_state: AgentState | None = None,
     ) -> list[ChatMessage]:
+        compact_tools = [
+            {"name": tool["name"], "implemented": tool["implemented"]} for tool in available_tools()
+        ]
         enriched_context = {
             **event_context,
             "current_time": datetime.now(UTC).isoformat(),
-            "available_tools": available_tools(),
+            "available_tools": compact_tools,
         }
         if bot_settings is not None:
             enriched_context["character"] = {
@@ -145,7 +148,7 @@ class AgentOrchestrator:
             ChatMessage(
                 role="user",
                 content="Event context:\n"
-                + json.dumps(enriched_context, ensure_ascii=False, indent=2),
+                + json.dumps(enriched_context, ensure_ascii=False, separators=(",", ":")),
             )
         )
         return messages

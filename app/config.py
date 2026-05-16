@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 120
     llm_temperature: float = 0.7
     llm_max_tokens: int = 800
+    agent_temperature: float = 0.2
+    agent_max_tokens: int = 2048
+    agent_context_messages: int = 8
+    agent_max_delay_seconds: float = 0.5
+    agent_typing_seconds: float = 0.2
     vision_model: str = "qwen-vl"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
