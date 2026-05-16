@@ -6,6 +6,7 @@ from app.database.repositories import (
     get_or_create_chat,
     get_or_create_user,
     get_recent_messages,
+    save_agent_action,
     save_message,
 )
 from app.database.session import create_engine_from_url, create_session_factory, init_db
@@ -107,3 +108,22 @@ async def test_get_recent_messages_returns_chronological_user_and_assistant_text
 
         assert [message.id for message in messages] == [second.id, third.id]
         assert first.id not in [message.id for message in messages]
+
+
+async def test_save_agent_action_persists_action(session_factory) -> None:
+    async with session_factory() as session:
+        user = await get_or_create_user(session, 123, None, None, None)
+        chat = await get_or_create_chat(session, 456, user.id, None, "private")
+        action = await save_agent_action(
+            session=session,
+            user_id=user.id,
+            chat_id=chat.id,
+            action_type="send_message",
+            input_json={"action": "send_message"},
+            output_json={"sent_messages": [1]},
+        )
+
+        assert action.id is not None
+        assert action.action_type == "send_message"
+        assert action.status == "success"
+        assert action.output_json == {"sent_messages": [1]}

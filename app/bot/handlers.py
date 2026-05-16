@@ -9,12 +9,15 @@ from aiogram.types import Message as TelegramMessage
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent.orchestrator import AgentOrchestrator
+from app.agent.schemas import AgentActionType, AgentDecision
+from app.agent.tool_executor import ToolExecutionResult, ToolExecutor
 from app.config import Settings
 from app.database.models import Chat, User
 from app.database.repositories import (
     get_or_create_chat,
     get_or_create_user,
     get_recent_messages,
+    save_agent_action,
     save_message,
 )
 from app.llm.client import ChatMessage, LLMClientError
@@ -32,18 +35,23 @@ HELP_TEXT = (
     "Доступные команды:\n\n"
     "/start — запустить бота\n"
     "/help — показать помощь\n"
-    "/status — проверить состояние"
+    "/status — проверить состояние\n"
+    "/llm_test — проверить LLM\n"
+    "/agent_test — проверить JSON agent loop"
 )
 
 STATUS_TEXT = (
     "Бот работает.\n\n"
-    "Этап: 3\n"
+    "Этап: 4\n"
     "Telegram: подключен\n"
     "База данных: подключена\n"
     "LLM: подключена через OpenAI-compatible API\n"
     "Модель: {model}\n"
-    "Память: ещё не подключена\n"
-    "RAG: ещё не подключен\n"
+    "Agent loop: включен\n"
+    "Tool calling: JSON mode\n"
+    "Реализованные tools: send_message, ignore\n"
+    "Заглушки: remember, read_diary, sleep, take_photo, analyze_image\n"
+    "Память/RAG: ещё не подключены\n"
     "Vision: ещё не подключен"
 )
 
@@ -163,6 +171,28 @@ async def _save_assistant_message(
             raise
 
 
+async def _save_agent_action_record(
+    session_factory: async_sessionmaker[AsyncSession],
+    user_id: int | None,
+    chat_id: int | None,
+    decision: AgentDecision,
+    result: ToolExecutionResult | None,
+    status: str,
+    error: str | None = None,
+) -> None:
+    async with session_factory() as session:
+        await save_agent_action(
+            session=session,
+            user_id=user_id,
+            chat_id=chat_id,
+            action_type=decision.action.value,
+            input_json=decision.model_dump(mode="json"),
+            output_json=result.model_dump(mode="json") if result else None,
+            status=status,
+            error=error,
+        )
+
+
 async def _handle_with_db(
     session_factory: async_sessionmaker[AsyncSession],
     message: TelegramMessage,
@@ -256,11 +286,64 @@ async def handle_llm_test(
             logger.exception("Failed to save /llm_test assistant message")
 
 
+@router.message(Command("agent_test"))
+async def handle_agent_test(
+    message: TelegramMessage,
+    session_factory: async_sessionmaker[AsyncSession],
+    orchestrator: AgentOrchestrator,
+) -> None:
+    """Show a JSON agent decision without executing its tool."""
+    logger.info("Received /agent_test command")
+    try:
+        user_id, chat_id = await _save_user_message(session_factory, message)
+        async with session_factory() as session:
+            recent_messages = await get_recent_messages(
+                session=session,
+                chat_id=chat_id,
+                limit=orchestrator.max_context_messages,
+            )
+        decision = await orchestrator.decide(
+            recent_messages=recent_messages,
+            event_context={
+                "event_type": "agent_test",
+                "telegram_user_id": message.from_user.id if message.from_user else None,
+                "username": message.from_user.username if message.from_user else None,
+                "first_name": message.from_user.first_name if message.from_user else None,
+                "text": "Пользователь проверяет JSON agent loop. Ответь коротко.",
+            },
+        )
+        messages_text = "\n".join(f"- {text}" for text in decision.normalized_messages()) or "-"
+        answer_text = (
+            "Agent decision:\n\n"
+            f"action: {decision.action.value}\n"
+            f"emotion: {decision.emotion.value}\n"
+            "messages:\n"
+            f"{messages_text}"
+        )
+        response = await message.answer(answer_text)
+        await _save_assistant_message(session_factory, chat_id, answer_text, response.message_id)
+        await _save_agent_action_record(
+            session_factory=session_factory,
+            user_id=user_id,
+            chat_id=chat_id,
+            decision=decision,
+            result=ToolExecutionResult(status="preview", output={"agent_test": True}),
+            status="preview",
+        )
+    except LLMClientError:
+        logger.exception("LLM unavailable while processing /agent_test")
+        await message.answer(LLM_ERROR_TEXT)
+    except Exception:
+        logger.exception("Failed to process /agent_test command")
+        await message.answer(ERROR_TEXT)
+
+
 @router.message(F.text.func(lambda text: not text.startswith("/")))
 async def handle_text(
     message: TelegramMessage,
     session_factory: async_sessionmaker[AsyncSession],
     orchestrator: AgentOrchestrator,
+    tool_executor: ToolExecutor,
 ) -> None:
     """Handle any non-command text message."""
     text_length = len(message.text or "")
@@ -269,7 +352,7 @@ async def handle_text(
         extra={"telegram_chat_id": message.chat.id, "text_length": text_length},
     )
     try:
-        _, chat_id = await _save_user_message(session_factory, message)
+        user_id, chat_id = await _save_user_message(session_factory, message)
     except Exception:
         logger.exception("Failed to save user message")
         await message.answer(ERROR_TEXT)
@@ -282,22 +365,46 @@ async def handle_text(
                 chat_id=chat_id,
                 limit=orchestrator.max_context_messages,
             )
-        answer_text = await orchestrator.generate_reply(recent_messages)
+        decision = await orchestrator.decide(
+            recent_messages=recent_messages,
+            event_context={
+                "event_type": "telegram_text_message",
+                "telegram_user_id": message.from_user.id if message.from_user else None,
+                "username": message.from_user.username if message.from_user else None,
+                "first_name": message.from_user.first_name if message.from_user else None,
+                "text": message.text,
+            },
+        )
     except LLMClientError:
         logger.exception("LLM unavailable while processing text message")
-        answer_text = LLM_ERROR_TEXT
+        response = await message.answer(LLM_ERROR_TEXT)
+        await _save_assistant_message(session_factory, chat_id, LLM_ERROR_TEXT, response.message_id)
+        return
     except Exception:
         logger.exception("Failed to generate Telegram reply")
         await message.answer(ERROR_TEXT)
         return
 
-    response = await message.answer(answer_text)
-    try:
-        await _save_assistant_message(
-            session_factory,
-            chat_id,
-            answer_text,
-            response.message_id,
-        )
-    except Exception:
-        logger.exception("Failed to save assistant message")
+    result = await tool_executor.execute(decision=decision, telegram_chat_id=message.chat.id)
+    logger.info(
+        "Executed agent tool",
+        extra={"action": decision.action.value, "tool_status": result.status},
+    )
+    await _save_agent_action_record(
+        session_factory=session_factory,
+        user_id=user_id,
+        chat_id=chat_id,
+        decision=decision,
+        result=result,
+        status=result.status,
+        error=result.error,
+    )
+
+    if decision.action == AgentActionType.SEND_MESSAGE and result.status == "success":
+        for sent_message in result.output.get("sent_messages", []):
+            await _save_assistant_message(
+                session_factory=session_factory,
+                chat_id=chat_id,
+                text=sent_message["text"],
+                telegram_message_id=sent_message["message_id"],
+            )

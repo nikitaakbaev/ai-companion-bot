@@ -6,7 +6,7 @@ Python-проект Telegram AI companion bot с памятью, дневник�
 
 ## Текущий статус
 
-Этап 3: LLM-интеграция. Память, RAG, vision, ComfyUI и scheduler пока не реализованы.
+Этап 4: JSON Agent Loop и Tool Calling. Память, RAG, vision, ComfyUI и scheduler пока не реализованы.
 
 ## Этап 2: Telegram MVP
 
@@ -32,6 +32,44 @@ Python-проект Telegram AI companion bot с памятью, дневник�
 - сборка простого prompt с историей последних сообщений;
 - команда `/llm_test`;
 - сохранение ответов LLM в SQLite.
+
+## Этап 4: JSON Agent Loop и Tool Calling
+
+На этом этапе бот больше не использует обычный текстовый ответ LLM для диалога. Теперь LLM возвращает JSON-решение, а Python валидирует его и выполняет выбранное действие через `ToolExecutor`.
+
+Пример JSON:
+
+```json
+{
+  "thought": "Пользователь поздоровался.",
+  "action": "send_message",
+  "messages": ["Привет.", "Я на связи."],
+  "tool_input": {},
+  "emotion": "happy",
+  "delay_seconds": 1
+}
+```
+
+Работают tools:
+
+- `send_message`
+- `ignore`
+
+Заглушки будущих этапов:
+
+- `remember`
+- `read_diary`
+- `sleep`
+- `take_photo`
+- `analyze_image`
+
+Команда проверки:
+
+```text
+/agent_test
+```
+
+Если после обновления появилась ошибка с таблицей `agent_actions`, можно удалить старую SQLite-базу `data/bot.db` и запустить проект заново. В следующих этапах будет добавлен Alembic.
 
 ## Возможности будущих этапов
 
@@ -127,8 +165,9 @@ uv run python -m app.main
 2. Отправьте `/start`.
 3. Отправьте `/status`.
 4. Отправьте `/llm_test`.
-5. Отправьте любое текстовое сообщение.
-6. Проверьте, что создан файл `data/bot.db`.
+5. Отправьте `/agent_test`.
+6. Отправьте любое текстовое сообщение.
+7. Проверьте, что создан файл `data/bot.db`.
 
 ## Тесты
 

@@ -6,6 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 
 from app.agent.orchestrator import AgentOrchestrator
+from app.agent.tool_executor import ToolExecutor
 from app.bot.router import router
 from app.config import get_settings
 from app.database.session import create_engine_from_url, create_session_factory, init_db
@@ -53,10 +54,12 @@ async def main() -> None:
     )
 
     bot = Bot(token=settings.telegram_bot_token)
+    tool_executor = ToolExecutor(bot=bot)
     dp = Dispatcher()
     dp.include_router(router)
     dp["session_factory"] = session_factory
     dp["orchestrator"] = orchestrator
+    dp["tool_executor"] = tool_executor
     dp["settings"] = settings
 
     logger.info("Starting Telegram polling")

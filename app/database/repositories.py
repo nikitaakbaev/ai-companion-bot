@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Chat, Message, User, utc_now
+from app.database.models import AgentAction, Chat, Message, User, utc_now
 
 
 async def get_or_create_user(
@@ -110,3 +110,33 @@ async def get_recent_messages(
     )
     messages = list(result.scalars().all())
     return list(reversed(messages))
+
+
+async def save_agent_action(
+    session: AsyncSession,
+    user_id: int | None,
+    chat_id: int | None,
+    action_type: str,
+    input_json: dict | None,
+    output_json: dict | None,
+    status: str = "success",
+    error: str | None = None,
+) -> AgentAction:
+    """Persist one agent action."""
+    action = AgentAction(
+        user_id=user_id,
+        chat_id=chat_id,
+        action_type=action_type,
+        input_json=input_json,
+        output_json=output_json,
+        status=status,
+        error=error,
+    )
+    session.add(action)
+    try:
+        await session.commit()
+        await session.refresh(action)
+    except Exception:
+        await session.rollback()
+        raise
+    return action
