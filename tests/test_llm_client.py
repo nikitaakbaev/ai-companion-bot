@@ -46,6 +46,22 @@ async def test_client_raises_response_error_without_choices() -> None:
         await client.generate_text([ChatMessage(role="user", content="Hi")])
 
 
+async def test_client_allows_empty_content() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": "   "}}]})
+
+    client = OpenAICompatibleLLMClient(
+        base_url="http://llm.test/v1",
+        api_key="secret",
+        model="test-model",
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = await client.generate_text([ChatMessage(role="user", content="Hi")])
+
+    assert response.content == ""
+
+
 async def test_client_raises_connection_error_on_connect_error() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("cannot connect", request=request)
@@ -79,4 +95,3 @@ async def test_client_does_not_add_double_slash_to_url() -> None:
     await client.generate_text([ChatMessage(role="user", content="Hi")])
 
     assert seen_url == "http://llm.test/v1/chat/completions"
-

@@ -55,6 +55,10 @@ LLM_ERROR_TEXT = (
 LLM_TEST_ERROR_TEXT = (
     "LLM недоступна. Проверь LLM_BASE_URL, LLM_MODEL и запущенный сервер модели."
 )
+LLM_EMPTY_RESPONSE_TEXT = (
+    "LLM подключена, но вернула пустой ответ. "
+    "Проверь выбранную модель и попробуй увеличить LLM_MAX_TOKENS."
+)
 
 
 async def _get_or_create_context(
@@ -229,6 +233,8 @@ async def handle_llm_test(
             max_tokens=orchestrator.max_tokens,
         )
         answer_text = response.content.strip()
+        if not answer_text:
+            answer_text = LLM_EMPTY_RESPONSE_TEXT
     except LLMClientError:
         logger.exception("LLM test failed")
         answer_text = LLM_TEST_ERROR_TEXT

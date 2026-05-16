@@ -121,5 +121,5 @@ class OpenAICompatibleLLMClient(LLMClient):
         if not isinstance(content, str):
             raise LLMResponseError("LLM response content is not a string")
         if not content.strip():
-            raise LLMResponseError("LLM response content is empty")
+            logger.warning("LLM response content is empty")
         return content.strip()
