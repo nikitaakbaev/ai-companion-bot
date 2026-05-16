@@ -1,9 +1,7 @@
-"""Bot middleware placeholders."""
+"""Bot middleware placeholders for later stages."""
+
+from aiogram import BaseMiddleware
 
 
-class LoggingMiddleware:
-    """Placeholder for aiogram middleware."""
-
-    async def __call__(self) -> None:
-        raise NotImplementedError
-
+class DatabaseMiddleware(BaseMiddleware):
+    """Reserved for database session injection in later stages."""

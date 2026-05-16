@@ -1,6 +1,7 @@
-"""SQLAlchemy base placeholders."""
+"""SQLAlchemy declarative base."""
+
+from sqlalchemy.orm import DeclarativeBase
 
 
-class Base:
-    """SQLAlchemy declarative base placeholder."""
-
+class Base(DeclarativeBase):
+    """Base class for ORM models."""

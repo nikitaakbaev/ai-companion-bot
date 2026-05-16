@@ -12,3 +12,4 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.rag_top_k == 5
     assert settings.rag_min_score == 0.65
     assert settings.proactive_enabled is False
+    assert settings.telegram_bot_token is None
