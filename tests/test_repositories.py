@@ -2,7 +2,12 @@ import pytest
 from sqlalchemy import select
 
 from app.database.models import Chat, Message, User
-from app.database.repositories import get_or_create_chat, get_or_create_user, save_message
+from app.database.repositories import (
+    get_or_create_chat,
+    get_or_create_user,
+    get_recent_messages,
+    save_message,
+)
 from app.database.session import create_engine_from_url, create_session_factory, init_db
 
 
@@ -84,3 +89,21 @@ async def test_save_message_persists_message(session_factory) -> None:
         assert saved.text == "hello"
         assert saved.role == "user"
         assert saved.telegram_message_id == 789
+
+
+async def test_get_recent_messages_returns_chronological_user_and_assistant_text(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        user = await get_or_create_user(session, 123, None, None, None)
+        chat = await get_or_create_chat(session, 456, user.id, None, "private")
+        first = await save_message(session, chat.id, user.id, "user", "one", "text", 1)
+        await save_message(session, chat.id, None, "system", "skip", "text", 2)
+        await save_message(session, chat.id, user.id, "user", "", "text", 3)
+        second = await save_message(session, chat.id, None, "assistant", "two", "text", 4)
+        third = await save_message(session, chat.id, user.id, "user", "three", "text", 5)
+
+        messages = await get_recent_messages(session, chat.id, limit=2)
+
+        assert [message.id for message in messages] == [second.id, third.id]
+        assert first.id not in [message.id for message in messages]

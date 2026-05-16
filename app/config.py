@@ -1,8 +1,7 @@
 """Application configuration."""
 
-from functools import lru_cache
-
 from typing import Any
+from functools import lru_cache
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,6 +27,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://127.0.0.1:1234/v1"
     llm_api_key: str = "lm-studio"
     llm_model: str = "qwen/qwen3"
+    llm_timeout_seconds: int = 120
+    llm_temperature: float = 0.7
+    llm_max_tokens: int = 800
     vision_model: str = "qwen-vl"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 

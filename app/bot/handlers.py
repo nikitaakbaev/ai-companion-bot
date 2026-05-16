@@ -8,8 +8,16 @@ from aiogram.filters import Command
 from aiogram.types import Message as TelegramMessage
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.agent.orchestrator import AgentOrchestrator
+from app.config import Settings
 from app.database.models import Chat, User
-from app.database.repositories import get_or_create_chat, get_or_create_user, save_message
+from app.database.repositories import (
+    get_or_create_chat,
+    get_or_create_user,
+    get_recent_messages,
+    save_message,
+)
+from app.llm.client import ChatMessage, LLMClientError
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -29,19 +37,24 @@ HELP_TEXT = (
 
 STATUS_TEXT = (
     "Бот работает.\n\n"
-    "Этап: 2\n"
+    "Этап: 3\n"
     "Telegram: подключен\n"
     "База данных: подключена\n"
-    "LLM: ещё не подключена\n"
-    "Память: ещё не подключена"
-)
-
-TEXT_STUB = (
-    "Я получил сообщение и сохранил его в историю. "
-    "На следующем этапе это сообщение будет передаваться в LLM."
+    "LLM: подключена через OpenAI-compatible API\n"
+    "Модель: {model}\n"
+    "Память: ещё не подключена\n"
+    "RAG: ещё не подключен\n"
+    "Vision: ещё не подключен"
 )
 
 ERROR_TEXT = "Произошла внутренняя ошибка при обработке сообщения."
+LLM_ERROR_TEXT = (
+    "Сейчас я не могу получить ответ от LLM. "
+    "Проверь, что LM Studio/Ollama запущен и модель загружена."
+)
+LLM_TEST_ERROR_TEXT = (
+    "LLM недоступна. Проверь LLM_BASE_URL, LLM_MODEL и запущенный сервер модели."
+)
 
 
 async def _get_or_create_context(
@@ -102,6 +115,50 @@ async def _save_interaction(
             raise
 
 
+async def _save_user_message(
+    session_factory: async_sessionmaker[AsyncSession],
+    message: TelegramMessage,
+) -> tuple[int, int]:
+    async with session_factory() as session:
+        try:
+            user, chat = await _get_or_create_context(session, message)
+            await save_message(
+                session=session,
+                chat_id=chat.id,
+                user_id=user.id,
+                role="user",
+                text=message.text,
+                message_type="text",
+                telegram_message_id=message.message_id,
+            )
+            return user.id, chat.id
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def _save_assistant_message(
+    session_factory: async_sessionmaker[AsyncSession],
+    chat_id: int,
+    text: str,
+    telegram_message_id: int | None,
+) -> None:
+    async with session_factory() as session:
+        try:
+            await save_message(
+                session=session,
+                chat_id=chat_id,
+                user_id=None,
+                role="assistant",
+                text=text,
+                message_type="text",
+                telegram_message_id=telegram_message_id,
+            )
+        except Exception:
+            await session.rollback()
+            raise
+
+
 async def _handle_with_db(
     session_factory: async_sessionmaker[AsyncSession],
     message: TelegramMessage,
@@ -139,21 +196,102 @@ async def handle_help(
 async def handle_status(
     message: TelegramMessage,
     session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
 ) -> None:
     """Handle /status."""
-    await _handle_with_db(session_factory, message, STATUS_TEXT, "Received /status command")
+    await _handle_with_db(
+        session_factory,
+        message,
+        STATUS_TEXT.format(model=settings.llm_model),
+        "Received /status command",
+    )
+
+
+@router.message(Command("llm_test"))
+async def handle_llm_test(
+    message: TelegramMessage,
+    session_factory: async_sessionmaker[AsyncSession],
+    orchestrator: AgentOrchestrator,
+) -> None:
+    """Send a simple smoke-test prompt to the configured LLM."""
+    logger.info("Received /llm_test command")
+    chat_id: int | None = None
+    try:
+        _, chat_id = await _save_user_message(session_factory, message)
+        response = await orchestrator.llm_client.generate_text(
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="Ответь одним коротким предложением: LLM работает.",
+                )
+            ],
+            temperature=orchestrator.temperature,
+            max_tokens=orchestrator.max_tokens,
+        )
+        answer_text = response.content.strip()
+    except LLMClientError:
+        logger.exception("LLM test failed")
+        answer_text = LLM_TEST_ERROR_TEXT
+    except Exception:
+        logger.exception("Failed to process /llm_test command")
+        await message.answer(ERROR_TEXT)
+        return
+
+    response_message = await message.answer(answer_text)
+    if chat_id is not None:
+        try:
+            await _save_assistant_message(
+                session_factory,
+                chat_id,
+                answer_text,
+                response_message.message_id,
+            )
+        except Exception:
+            logger.exception("Failed to save /llm_test assistant message")
 
 
 @router.message(F.text.func(lambda text: not text.startswith("/")))
 async def handle_text(
     message: TelegramMessage,
     session_factory: async_sessionmaker[AsyncSession],
+    orchestrator: AgentOrchestrator,
 ) -> None:
     """Handle any non-command text message."""
-    await _handle_with_db(
-        session_factory,
-        message,
-        TEXT_STUB,
+    text_length = len(message.text or "")
+    logger.info(
         "Received text message",
-        {"telegram_chat_id": message.chat.id},
+        extra={"telegram_chat_id": message.chat.id, "text_length": text_length},
     )
+    try:
+        _, chat_id = await _save_user_message(session_factory, message)
+    except Exception:
+        logger.exception("Failed to save user message")
+        await message.answer(ERROR_TEXT)
+        return
+
+    try:
+        async with session_factory() as session:
+            recent_messages = await get_recent_messages(
+                session=session,
+                chat_id=chat_id,
+                limit=orchestrator.max_context_messages,
+            )
+        answer_text = await orchestrator.generate_reply(recent_messages)
+    except LLMClientError:
+        logger.exception("LLM unavailable while processing text message")
+        answer_text = LLM_ERROR_TEXT
+    except Exception:
+        logger.exception("Failed to generate Telegram reply")
+        await message.answer(ERROR_TEXT)
+        return
+
+    response = await message.answer(answer_text)
+    try:
+        await _save_assistant_message(
+            session_factory,
+            chat_id,
+            answer_text,
+            response.message_id,
+        )
+    except Exception:
+        logger.exception("Failed to save assistant message")

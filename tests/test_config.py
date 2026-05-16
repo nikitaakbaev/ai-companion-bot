@@ -13,3 +13,6 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.rag_min_score == 0.65
     assert settings.proactive_enabled is False
     assert settings.telegram_bot_token is None
+    assert settings.llm_timeout_seconds == 120
+    assert settings.llm_temperature == 0.7
+    assert settings.llm_max_tokens == 800

@@ -89,3 +89,24 @@ async def save_message(
     await session.commit()
     await session.refresh(message)
     return message
+
+
+async def get_recent_messages(
+    session: AsyncSession,
+    chat_id: int,
+    limit: int = 20,
+) -> list[Message]:
+    """Return recent user/assistant messages in chronological order."""
+    result = await session.execute(
+        select(Message)
+        .where(
+            Message.chat_id == chat_id,
+            Message.role.in_(("user", "assistant")),
+            Message.text.is_not(None),
+            Message.text != "",
+        )
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .limit(limit)
+    )
+    messages = list(result.scalars().all())
+    return list(reversed(messages))
