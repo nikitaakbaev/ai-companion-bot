@@ -56,7 +56,14 @@ class Settings(BaseSettings):
     comfyui_base_url: str = "http://127.0.0.1:8188"
     generated_images_dir: str = "./data/generated_images"
     media_storage_dir: str = "./data/media"
-    diary_enabled: bool = False
+    diary_enabled: bool = True
+    diary_lookback_hours: int = 24
+    diary_min_messages: int = 3
+    diary_max_messages: int = 100
+    diary_max_input_chars: int = 20000
+    diary_max_entries_per_run: int = 8
+    diary_reflection_model: str | None = None
+    diary_skip_if_exists_for_date: bool = True
 
     proactive_enabled: bool = False
     proactive_min_interval_minutes: int = 60

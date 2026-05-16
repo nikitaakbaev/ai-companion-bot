@@ -6,7 +6,7 @@ Python-проект Telegram AI companion bot с памятью, дневник�
 
 ## Текущий статус
 
-Этап 5: полноценная база данных, настройки и история. Реальный дневник, RAG, vision, ComfyUI и scheduler пока не реализованы.
+Этап 6: дневник и долговременная память без RAG. RAG, embeddings, vision, ComfyUI и scheduler пока не реализованы.
 
 ## Этап 2: Telegram MVP
 
@@ -100,6 +100,30 @@ mkdir data
 alembic upgrade head
 python -m app.main
 ```
+
+## Этап 6: Дневник и долговременная память
+
+На этом этапе бот умеет сжимать историю переписки в дневниковые записи.
+
+Команды:
+
+- `/sleep` — создать дневниковую сводку
+- `/diary` — показать краткий дневник
+- `/diary_full` — показать последние записи полностью
+
+Пример `.env`:
+
+```env
+DIARY_ENABLED=true
+DIARY_LOOKBACK_HOURS=24
+DIARY_MIN_MESSAGES=3
+DIARY_MAX_MESSAGES=100
+DIARY_MAX_INPUT_CHARS=20000
+DIARY_MAX_ENTRIES_PER_RUN=8
+DIARY_SKIP_IF_EXISTS_FOR_DATE=true
+```
+
+Дневник пока не используется автоматически при ответах. На этапе 7 будет добавлен RAG: бот начнёт искать релевантные записи дневника и подмешивать их в prompt.
 
 Для разработки можно включить старое поведение:
 

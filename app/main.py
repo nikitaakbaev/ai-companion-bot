@@ -14,6 +14,8 @@ from app.config import get_settings
 from app.database.session import create_engine_from_url, create_session_factory, init_db
 from app.llm.openai_compatible import OpenAICompatibleLLMClient
 from app.logging_config import setup_logging
+from app.memory.diary import DiaryService
+from app.memory.summarizer import DiarySummarizer
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +56,40 @@ async def main() -> None:
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
     )
+    diary_model = settings.diary_reflection_model or settings.llm_model
+    diary_llm_client = (
+        llm_client
+        if diary_model == settings.llm_model
+        else OpenAICompatibleLLMClient(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            model=diary_model,
+            timeout_seconds=settings.llm_timeout_seconds,
+            default_temperature=0.2,
+            default_max_tokens=settings.llm_max_tokens,
+        )
+    )
+    diary_summarizer = DiarySummarizer(
+        llm_client=diary_llm_client,
+        max_entries_per_run=settings.diary_max_entries_per_run,
+        max_input_chars=settings.diary_max_input_chars,
+    )
+    diary_service = DiaryService(
+        summarizer=diary_summarizer,
+        min_messages=settings.diary_min_messages,
+        max_messages=settings.diary_max_messages,
+        lookback_hours=settings.diary_lookback_hours,
+        skip_if_exists_for_date=settings.diary_skip_if_exists_for_date,
+    )
 
     bot = Bot(token=settings.telegram_bot_token, session=AiohttpSession(timeout=120))
-    tool_executor = ToolExecutor(bot=bot)
+    tool_executor = ToolExecutor(bot=bot, diary_service=diary_service)
     dp = Dispatcher()
     dp.include_router(router)
     dp["session_factory"] = session_factory
     dp["orchestrator"] = orchestrator
     dp["tool_executor"] = tool_executor
+    dp["diary_service"] = diary_service
     dp["settings"] = settings
 
     logger.info("Starting Telegram polling")

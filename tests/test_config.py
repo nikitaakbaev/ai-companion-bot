@@ -21,4 +21,11 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.message_history_limit == 50
     assert settings.max_stored_message_length == 8000
     assert settings.media_storage_dir == "./data/media"
-    assert settings.diary_enabled is False
+    assert settings.diary_enabled is True
+    assert settings.diary_lookback_hours == 24
+    assert settings.diary_min_messages == 3
+    assert settings.diary_max_messages == 100
+    assert settings.diary_max_input_chars == 20000
+    assert settings.diary_max_entries_per_run == 8
+    assert settings.diary_reflection_model is None
+    assert settings.diary_skip_if_exists_for_date is True

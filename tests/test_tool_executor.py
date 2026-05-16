@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from app.agent.schemas import AgentDecision
 from app.agent.tool_executor import ToolExecutor
+from app.memory.diary import DiaryServiceResult
 
 
 @dataclass
@@ -20,6 +21,11 @@ class FakeBot:
     async def send_message(self, chat_id: int, text: str) -> FakeTelegramMessage:
         self.sent_messages.append((chat_id, text))
         return FakeTelegramMessage(message_id=len(self.sent_messages))
+
+
+class FakeDiaryService:
+    async def create_daily_summary(self, session, user_id: int) -> DiaryServiceResult:
+        return DiaryServiceResult(status="created", created_count=1, day_summary="Summary")
 
 
 async def test_send_message_sends_all_messages() -> None:
@@ -57,3 +63,14 @@ async def test_stub_tool_returns_stub_result() -> None:
 
     assert result.status == "stub"
     assert result.output["stub"] is True
+
+
+async def test_sleep_tool_calls_diary_service() -> None:
+    bot = FakeBot()
+    executor = ToolExecutor(bot=bot, diary_service=FakeDiaryService())
+    decision = AgentDecision(action="sleep")
+
+    result = await executor.execute(decision, telegram_chat_id=123, session=object(), user_id=1)
+
+    assert result.status == "created"
+    assert result.output["created_count"] == 1

@@ -1,5 +1,13 @@
-from app.bot.formatters import format_actions, format_diary, format_history, format_settings
+from app.bot.formatters import (
+    format_actions,
+    format_diary,
+    format_diary_full,
+    format_history,
+    format_settings,
+    format_sleep_result,
+)
 from app.database.models import AgentAction, BotSettings, DiaryEntry, Message
+from app.memory.diary import DiaryServiceResult
 
 
 def test_format_history_empty() -> None:
@@ -48,10 +56,58 @@ def test_format_settings() -> None:
 
 
 def test_format_diary_empty_and_entries() -> None:
-    assert format_diary([]) == "Дневник пока пустой. Он появится на этапе 6."
+    assert format_diary([]) == "Дневник пока пустой. Напиши несколько сообщений и вызови /sleep."
 
-    text = format_diary([DiaryEntry(user_id=1, title="Day", content="Content", summary="Summary")])
+    text = format_diary(
+        [
+            DiaryEntry(
+                user_id=1,
+                title="Day",
+                content="Content",
+                summary="Summary",
+                topics=["LLM"],
+                importance=7,
+            )
+        ]
+    )
 
     assert "1. Day" in text
-    assert "Summary" in text
+    assert "Важность: 7/10" in text
+    assert "Темы: LLM" in text
+    assert "Кратко: Summary" in text
 
+
+def test_format_diary_full() -> None:
+    text = format_diary_full(
+        [
+            DiaryEntry(
+                user_id=1,
+                title="Day",
+                content="Content",
+                facts_about_user=["uses Ollama"],
+                facts_about_relationship=["building bot"],
+                topics=["LLM"],
+                emotion="happy",
+                importance=8,
+            )
+        ]
+    )
+
+    assert "Дневник полностью:" in text
+    assert "Content: Content" in text
+    assert "- uses Ollama" in text
+    assert "Importance: 8/10" in text
+
+
+def test_format_sleep_result() -> None:
+    created = format_sleep_result(
+        DiaryServiceResult(status="created", created_count=2, day_summary="Summary")
+    )
+    skipped = format_sleep_result(
+        DiaryServiceResult(status="skipped", skipped_reason="not_enough_messages")
+    )
+    empty = format_sleep_result(DiaryServiceResult(status="empty"))
+
+    assert "Создано записей: 2" in created
+    assert "недостаточно сообщений" in skipped
+    assert "не нашёл ничего достаточно важного" in empty

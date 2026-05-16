@@ -1,6 +1,7 @@
 """Telegram response formatters."""
 
 from app.database.models import AgentAction, BotSettings, DiaryEntry, Message
+from app.memory.diary import DiaryServiceResult
 
 
 def format_settings(settings: BotSettings) -> str:
@@ -49,10 +50,68 @@ def format_actions(actions: list[AgentAction]) -> str:
 def format_diary(entries: list[DiaryEntry]) -> str:
     """Format recent diary entries."""
     if not entries:
-        return "Дневник пока пустой. Он появится на этапе 6."
+        return "Дневник пока пустой. Напиши несколько сообщений и вызови /sleep."
 
     lines = ["Дневник:\n"]
     for index, entry in enumerate(entries, start=1):
+        topics = ", ".join(entry.topics or []) or "-"
         summary = entry.summary or entry.content
-        lines.append(f"{index}. {entry.title}\n{summary}")
+        lines.append(
+            f"{index}. {entry.title}\n"
+            f"Важность: {entry.importance}/10\n"
+            f"Темы: {topics}\n"
+            f"Кратко: {summary}"
+        )
     return "\n\n".join(lines)
+
+
+def format_diary_full(entries: list[DiaryEntry]) -> str:
+    """Format full diary entries."""
+    if not entries:
+        return "Дневник пока пустой. Напиши несколько сообщений и вызови /sleep."
+
+    lines = ["Дневник полностью:\n"]
+    for index, entry in enumerate(entries, start=1):
+        facts_user = "\n".join(f"- {fact}" for fact in (entry.facts_about_user or [])) or "-"
+        facts_relationship = (
+            "\n".join(f"- {fact}" for fact in (entry.facts_about_relationship or [])) or "-"
+        )
+        topics = "\n".join(f"- {topic}" for topic in (entry.topics or [])) or "-"
+        lines.append(
+            f"{index}. {entry.title}\n"
+            f"Content: {entry.content}\n"
+            "Facts about user:\n"
+            f"{facts_user}\n"
+            "Facts about relationship:\n"
+            f"{facts_relationship}\n"
+            "Topics:\n"
+            f"{topics}\n"
+            f"Emotion: {entry.emotion or '-'}\n"
+            f"Importance: {entry.importance}/10"
+        )
+    return "\n\n".join(lines)
+
+
+def format_sleep_result(result: DiaryServiceResult) -> str:
+    """Format /sleep result."""
+    if result.status == "created":
+        text = (
+            "Я обработал переписку и записал воспоминания в дневник.\n\n"
+            f"Создано записей: {result.created_count}"
+        )
+        if result.day_summary:
+            text += f"\n\nКраткая сводка:\n{result.day_summary}"
+        return text
+
+    if result.status == "skipped":
+        reasons = {
+            "already_exists_for_date": "уже есть записи за эту дату.",
+            "not_enough_messages": "недостаточно сообщений за период.",
+        }
+        reason = reasons.get(result.skipped_reason or "", result.skipped_reason or "неизвестно")
+        return f"Дневник не создан.\n\nПричина: {reason}"
+
+    if result.status == "empty":
+        return "Я просмотрел переписку, но не нашёл ничего достаточно важного для дневника."
+
+    return "Дневник не создан.\n\nПричина: внутренняя ошибка."

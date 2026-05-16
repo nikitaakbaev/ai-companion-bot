@@ -11,7 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.agent.orchestrator import AgentOrchestrator
 from app.agent.schemas import AgentActionType, AgentDecision
 from app.agent.tool_executor import ToolExecutionResult, ToolExecutor
-from app.bot.formatters import format_actions, format_diary, format_history, format_settings
+from app.bot.formatters import (
+    format_actions,
+    format_diary,
+    format_diary_full,
+    format_history,
+    format_settings,
+    format_sleep_result,
+)
 from app.config import Settings
 from app.database.models import AgentState, BotSettings, Chat, User
 from app.database.repositories import (
@@ -29,6 +36,7 @@ from app.database.repositories import (
     update_agent_state,
 )
 from app.llm.client import ChatMessage, LLMClientError
+from app.memory.diary import DiaryService
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -49,22 +57,24 @@ HELP_TEXT = (
     "/settings — показать настройки\n"
     "/history — последние сообщения\n"
     "/actions — последние действия агента\n"
-    "/diary — дневник памяти"
+    "/sleep — сжать историю переписки в дневник\n"
+    "/diary — кратко показать дневник\n"
+    "/diary_full — показать полные последние записи"
 )
 
 STATUS_TEXT = (
     "Бот работает.\n\n"
-    "Этап: 5\n"
+    "Этап: 6\n"
     "Telegram: подключен\n"
     "База данных: подключена\n"
     "LLM: подключена через OpenAI-compatible API\n"
     "Модель: {model}\n"
     "Agent loop: включен\n"
     "Tool calling: JSON mode\n"
-    "Реализованные tools: send_message, ignore\n"
-    "Заглушки: remember, read_diary, sleep, take_photo, analyze_image\n"
-    "Память/RAG: ещё не подключены\n"
-    "Vision: ещё не подключен"
+    "Дневник: {diary_status}\n"
+    "RAG: ещё не подключен\n"
+    "Vision: ещё не подключен\n"
+    "Проактивность: ещё не подключена"
 )
 
 ERROR_TEXT = "Произошла внутренняя ошибка при обработке сообщения."
@@ -275,7 +285,10 @@ async def handle_status(
     await _handle_with_db(
         session_factory,
         message,
-        STATUS_TEXT.format(model=settings.llm_model),
+        STATUS_TEXT.format(
+            model=settings.llm_model,
+            diary_status="включен" if settings.diary_enabled else "выключен в настройках",
+        ),
         "Received /status command",
         settings,
     )
@@ -495,6 +508,75 @@ async def handle_diary(
         await message.answer(ERROR_TEXT)
 
 
+@router.message(Command("diary_full"))
+async def handle_diary_full(
+    message: TelegramMessage,
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+) -> None:
+    """Show recent diary entries in full form."""
+    logger.info("Received /diary_full command")
+    try:
+        user_id, chat_id = await _save_user_message(session_factory, message, settings)
+        async with session_factory() as session:
+            entries = await get_recent_diary_entries(session, user_id=user_id, limit=3)
+        answer_text = format_diary_full(entries)
+        response = await message.answer(answer_text)
+        await _save_assistant_message(
+            session_factory,
+            chat_id,
+            answer_text,
+            response.message_id,
+            settings,
+        )
+    except Exception:
+        logger.exception("Failed to process /diary_full command")
+        await message.answer(ERROR_TEXT)
+
+
+@router.message(Command("sleep"))
+async def handle_sleep(
+    message: TelegramMessage,
+    session_factory: async_sessionmaker[AsyncSession],
+    diary_service: DiaryService,
+    settings: Settings,
+) -> None:
+    """Create diary entries from recent conversation history."""
+    logger.info("Received /sleep command")
+    try:
+        user_id, chat_id = await _save_user_message(session_factory, message, settings)
+        if not settings.diary_enabled:
+            answer_text = "Дневник выключен в настройках."
+            result = None
+        else:
+            async with session_factory() as session:
+                result = await diary_service.create_daily_summary(session=session, user_id=user_id)
+            answer_text = format_sleep_result(result)
+
+        response = await message.answer(answer_text)
+        await _save_assistant_message(
+            session_factory,
+            chat_id,
+            answer_text,
+            response.message_id,
+            settings,
+        )
+        await _save_agent_action_record(
+            session_factory=session_factory,
+            user_id=user_id,
+            chat_id=chat_id,
+            decision=AgentDecision(action=AgentActionType.SLEEP, messages=[]),
+            result=ToolExecutionResult(
+                status=result.status if result else "disabled",
+                output=result.model_dump(mode="json") if result else {"disabled": True},
+            ),
+            status=result.status if result else "disabled",
+        )
+    except Exception:
+        logger.exception("Failed to process /sleep command")
+        await message.answer(ERROR_TEXT)
+
+
 @router.message(F.text.func(lambda text: not text.startswith("/")))
 async def handle_text(
     message: TelegramMessage,
@@ -553,7 +635,13 @@ async def handle_text(
         await message.answer(ERROR_TEXT)
         return
 
-    result = await tool_executor.execute(decision=decision, telegram_chat_id=message.chat.id)
+    async with session_factory() as session:
+        result = await tool_executor.execute(
+            decision=decision,
+            telegram_chat_id=message.chat.id,
+            session=session,
+            user_id=user_id,
+        )
     logger.info(
         "Executed agent tool",
         extra={"action": decision.action.value, "tool_status": result.status},

@@ -18,6 +18,7 @@ from app.database.models import (
     User,
     utc_now,
 )
+from app.memory.schemas import DiaryEntryCreate
 
 
 async def get_or_create_user(
@@ -150,6 +151,30 @@ async def get_recent_messages(
             Message.role.in_(("user", "assistant")),
             Message.text.is_not(None),
             Message.text != "",
+        )
+        .order_by(Message.created_at.desc(), Message.id.desc())
+        .limit(limit)
+    )
+    messages = list(result.scalars().all())
+    return list(reversed(messages))
+
+
+async def get_messages_for_period(
+    session: AsyncSession,
+    user_id: int,
+    since: datetime,
+    limit: int,
+) -> list[Message]:
+    """Return user/assistant messages for a user since a timestamp in chronological order."""
+    result = await session.execute(
+        select(Message)
+        .join(Chat, Message.chat_id == Chat.id)
+        .where(
+            Chat.user_id == user_id,
+            Message.role.in_(("user", "assistant")),
+            Message.text.is_not(None),
+            Message.text != "",
+            Message.created_at >= since,
         )
         .order_by(Message.created_at.desc(), Message.id.desc())
         .limit(limit)
@@ -338,6 +363,52 @@ async def create_diary_entry(
     await session.commit()
     await session.refresh(entry)
     return entry
+
+
+async def diary_entries_exist_for_date(
+    session: AsyncSession,
+    user_id: int,
+    source_date: date,
+) -> bool:
+    """Return whether diary entries already exist for a user and source date."""
+    result = await session.execute(
+        select(DiaryEntry.id)
+        .where(DiaryEntry.user_id == user_id, DiaryEntry.source_date == source_date)
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def create_diary_entries(
+    session: AsyncSession,
+    user_id: int,
+    entries: list[DiaryEntryCreate],
+) -> list[DiaryEntry]:
+    """Create multiple diary entries."""
+    created = [
+        DiaryEntry(
+            user_id=user_id,
+            title=entry.title,
+            content=entry.content,
+            summary=entry.summary,
+            facts_about_user=entry.facts_about_user,
+            facts_about_relationship=entry.facts_about_relationship,
+            topics=entry.topics,
+            importance=entry.importance,
+            emotion=entry.emotion,
+            source_date=entry.source_date,
+        )
+        for entry in entries
+    ]
+    session.add_all(created)
+    try:
+        await session.commit()
+        for entry in created:
+            await session.refresh(entry)
+    except Exception:
+        await session.rollback()
+        raise
+    return created
 
 
 async def get_recent_diary_entries(
