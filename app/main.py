@@ -4,6 +4,8 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramNetworkError
 
 from app.agent.orchestrator import AgentOrchestrator
 from app.agent.tool_executor import ToolExecutor
@@ -53,7 +55,7 @@ async def main() -> None:
         max_tokens=settings.llm_max_tokens,
     )
 
-    bot = Bot(token=settings.telegram_bot_token)
+    bot = Bot(token=settings.telegram_bot_token, session=AiohttpSession(timeout=120))
     tool_executor = ToolExecutor(bot=bot)
     dp = Dispatcher()
     dp.include_router(router)
@@ -65,6 +67,10 @@ async def main() -> None:
     logger.info("Starting Telegram polling")
     try:
         await dp.start_polling(bot)
+    except TelegramNetworkError:
+        logger.exception(
+            "Cannot connect to Telegram API. Check network, VPN/proxy, firewall, or try again later."
+        )
     finally:
         await bot.session.close()
         await engine.dispose()
