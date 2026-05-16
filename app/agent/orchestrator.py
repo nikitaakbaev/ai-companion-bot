@@ -138,7 +138,7 @@ class AgentOrchestrator:
                 "last_emotion": agent_state.last_emotion,
                 "last_action_type": agent_state.last_action_type,
             }
-        messages = [ChatMessage(role="system", content=AGENT_SYSTEM_PROMPT)]
+        messages = [ChatMessage(role="system", content=self._build_system_prompt(bot_settings))]
         for message in recent_messages[-self.max_context_messages :]:
             if message.role not in {"user", "assistant"} or not message.text:
                 continue
@@ -152,6 +152,20 @@ class AgentOrchestrator:
             )
         )
         return messages
+
+    @staticmethod
+    def _build_system_prompt(bot_settings: BotSettings | None = None) -> str:
+        if bot_settings is None:
+            return AGENT_SYSTEM_PROMPT
+
+        return (
+            f"{AGENT_SYSTEM_PROMPT}\n\n"
+            "Настройки персонажа из .env/BotSettings имеют высокий приоритет.\n"
+            f"Имя персонажа: {bot_settings.character_name}\n"
+            f"Описание персонажа: {bot_settings.character_description}\n"
+            f"Стиль общения: {bot_settings.personality_style}\n"
+            "Следуй этим настройкам при выборе сообщений в JSON."
+        )
 
     @staticmethod
     def _log_decision(decision: AgentDecision) -> None:

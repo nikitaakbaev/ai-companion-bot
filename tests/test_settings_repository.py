@@ -39,3 +39,22 @@ async def test_update_bot_settings(session_factory) -> None:
         assert fetched is not None
         assert fetched.character_name == "Elena"
 
+
+async def test_get_or_create_bot_settings_syncs_env_defaults(session_factory) -> None:
+    initial = Settings(_env_file=None)
+    updated = Settings(
+        _env_file=None,
+        default_character_name="Mira",
+        default_character_description="Strictly follow this character description.",
+        default_personality_style="brief and direct",
+        llm_model="new-model",
+    )
+    async with session_factory() as session:
+        user = await get_or_create_user(session, 123, None, None, None)
+        await get_or_create_bot_settings(session, user.id, initial)
+        synced = await get_or_create_bot_settings(session, user.id, updated)
+
+        assert synced.character_name == "Mira"
+        assert synced.character_description == "Strictly follow this character description."
+        assert synced.personality_style == "brief and direct"
+        assert synced.llm_model == "new-model"

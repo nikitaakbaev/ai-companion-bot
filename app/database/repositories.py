@@ -221,7 +221,7 @@ async def get_or_create_bot_settings(
     """Create default user settings or return existing settings."""
     existing = await get_bot_settings(session, user_id)
     if existing is not None:
-        return existing
+        return await sync_bot_settings_from_env(session, existing, settings)
 
     bot_settings = BotSettings(
         user_id=user_id,
@@ -241,6 +241,43 @@ async def get_or_create_bot_settings(
     session.add(bot_settings)
     await session.commit()
     await session.refresh(bot_settings)
+    return bot_settings
+
+
+async def sync_bot_settings_from_env(
+    session: AsyncSession,
+    bot_settings: BotSettings,
+    settings: Settings,
+) -> BotSettings:
+    """Sync env-driven defaults into persisted settings.
+
+    Early stages do not have settings edit commands yet, so .env is treated as the source of truth for
+    character/model defaults.
+    """
+    fields = {
+        "character_name": settings.default_character_name,
+        "character_description": settings.default_character_description,
+        "personality_style": settings.default_personality_style,
+        "llm_model": settings.llm_model,
+        "vision_model": settings.vision_model,
+        "embedding_model": settings.embedding_model,
+        "proactive_enabled": settings.default_proactive_enabled,
+        "proactive_min_interval_minutes": settings.default_proactive_min_interval_minutes,
+        "proactive_max_interval_minutes": settings.default_proactive_max_interval_minutes,
+        "timezone": settings.default_timezone,
+        "silent_hours_start": settings.silent_hours_start,
+        "silent_hours_end": settings.silent_hours_end,
+    }
+    changed = False
+    for field, value in fields.items():
+        if getattr(bot_settings, field) != value:
+            setattr(bot_settings, field, value)
+            changed = True
+
+    if changed:
+        bot_settings.updated_at = utc_now()
+        await session.commit()
+        await session.refresh(bot_settings)
     return bot_settings
 
 

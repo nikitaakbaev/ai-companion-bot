@@ -1,5 +1,6 @@
 from app.agent.orchestrator import AgentOrchestrator
 from app.agent.schemas import AgentActionType
+from app.database.models import BotSettings
 from app.llm.client import ChatMessage, LLMClient, LLMResponse
 
 
@@ -47,6 +48,36 @@ async def test_decide_parses_valid_json() -> None:
 
     assert decision.action == AgentActionType.SEND_MESSAGE
     assert decision.normalized_messages() == ["Привет"]
+
+
+async def test_decide_puts_character_settings_into_system_prompt() -> None:
+    llm = SequenceLLMClient(
+        [
+            """
+            {
+              "thought": "ok",
+              "action": "ignore",
+              "messages": [],
+              "tool_input": {},
+              "emotion": "neutral",
+              "delay_seconds": 0
+            }
+            """
+        ]
+    )
+    settings = BotSettings(
+        user_id=1,
+        character_name="Mira",
+        character_description="Always speak like Mira.",
+        personality_style="warm and short",
+    )
+
+    await make_orchestrator(llm).decide([], {"event_type": "test"}, bot_settings=settings)
+
+    system_prompt = llm.calls[0][0].content
+    assert "Имя персонажа: Mira" in system_prompt
+    assert "Описание персонажа: Always speak like Mira." in system_prompt
+    assert "Стиль общения: warm and short" in system_prompt
 
 
 async def test_decide_uses_repair_retry() -> None:
