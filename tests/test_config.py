@@ -1,0 +1,14 @@
+from app.config import Settings
+
+
+def test_settings_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("DEBUG", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.app_name == "AI Companion Bot"
+    assert settings.app_env == "local"
+    assert settings.llm_base_url == "http://127.0.0.1:1234/v1"
+    assert settings.rag_top_k == 5
+    assert settings.rag_min_score == 0.65
+    assert settings.proactive_enabled is False

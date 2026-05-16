@@ -1,0 +1,43 @@
+[project]
+name = "ai-companion-bot"
+version = "0.1.0"
+description = "Telegram AI companion bot scaffold"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram",
+    "pydantic",
+    "pydantic-settings",
+    "python-dotenv",
+    "httpx",
+    "sqlalchemy",
+    "aiosqlite",
+    "alembic",
+    "apscheduler",
+    "chromadb",
+    "sentence-transformers",
+    "structlog",
+    "orjson",
+    "tenacity",
+]
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
