@@ -143,10 +143,21 @@ async def test_decide_repairs_service_leak_in_messages_with_context() -> None:
     assert "Спасибо, что исправил" in llm.calls[1][-1].content
 
 
-async def test_decide_uses_fallback_after_two_parse_failures() -> None:
-    llm = SequenceLLMClient(["bad", "still bad"])
+async def test_decide_generates_plain_rescue_reply_after_two_parse_failures() -> None:
+    llm = SequenceLLMClient(["bad", "still bad", "Привет-привет. Я тут."])
 
     decision = await make_orchestrator(llm).decide([], {"event_type": "test"})
 
     assert decision.action == AgentActionType.SEND_MESSAGE
-    assert decision.normalized_messages() == ["Я немного запуталась. Напиши ещё раз, пожалуйста."]
+    assert decision.normalized_messages() == ["Привет-привет. Я тут."]
+    assert llm.json_modes == [True, True, False]
+
+
+async def test_decide_uses_neutral_rescue_fallback_when_plain_rescue_is_service_text() -> None:
+    llm = SequenceLLMClient(["bad", "still bad", "Here is the corrected valid JSON response"])
+
+    decision = await make_orchestrator(llm).decide([], {"event_type": "test"})
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+    assert decision.normalized_messages() == ["Я рядом. Расскажи, что у тебя?"]
+    assert llm.json_modes == [True, True, False]
