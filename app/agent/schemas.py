@@ -58,6 +58,28 @@ class AgentDecision(BaseModel):
     emotion: AgentEmotion = AgentEmotion.NEUTRAL
     delay_seconds: int = Field(default=0, ge=0, le=60)
 
+    @field_validator("action", mode="before")
+    @classmethod
+    def normalize_action(cls, value: object) -> AgentActionType | str:
+        """Map common model-invented action labels to the supported set."""
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip().lower()
+        aliases = {
+            "answer": AgentActionType.SEND_MESSAGE,
+            "message": AgentActionType.SEND_MESSAGE,
+            "reply": AgentActionType.SEND_MESSAGE,
+            "respond": AgentActionType.SEND_MESSAGE,
+            "send": AgentActionType.SEND_MESSAGE,
+            "chat": AgentActionType.SEND_MESSAGE,
+            "none": AgentActionType.IGNORE,
+            "no_reply": AgentActionType.IGNORE,
+            "skip": AgentActionType.IGNORE,
+            "photo": AgentActionType.TAKE_PHOTO,
+        }
+        return aliases.get(normalized, normalized)
+
     @field_validator("emotion", mode="before")
     @classmethod
     def normalize_emotion(cls, value: object) -> AgentEmotion | str:
@@ -82,6 +104,8 @@ class AgentDecision(BaseModel):
         """Drop empty messages and cap each message to Telegram-friendly length."""
         if value is None:
             return []
+        if isinstance(value, str):
+            value = [value]
         if not isinstance(value, list):
             raise ValueError("messages must be a list")
 
@@ -96,6 +120,30 @@ class AgentDecision(BaseModel):
                 text = SERVICE_LEAK_FALLBACK_MESSAGE
             messages.append(text[:MAX_AGENT_MESSAGE_LENGTH])
         return messages
+
+    @field_validator("tool_input", mode="before")
+    @classmethod
+    def normalize_tool_input(cls, value: object) -> dict:
+        """Accept empty tool input variants returned by smaller local models."""
+        if value is None or value == "":
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("tool_input must be an object")
+        return value
+
+    @field_validator("delay_seconds", mode="before")
+    @classmethod
+    def normalize_delay_seconds(cls, value: object) -> int | object:
+        """Coerce simple numeric delay variants to bounded whole seconds."""
+        if value is None or value == "":
+            return 0
+        if isinstance(value, str):
+            value = value.strip()
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return value
+        return max(0, min(60, round(numeric_value)))
 
     @model_validator(mode="after")
     def validate_action_payload(self) -> "AgentDecision":

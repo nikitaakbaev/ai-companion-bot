@@ -9,14 +9,17 @@ class SequenceLLMClient(LLMClient):
     def __init__(self, responses: list[str]) -> None:
         self.responses = responses
         self.calls: list[list[ChatMessage]] = []
+        self.json_modes: list[bool] = []
 
     async def generate_text(
         self,
         messages: list[ChatMessage],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> LLMResponse:
         self.calls.append(messages)
+        self.json_modes.append(json_mode)
         return LLMResponse(content=self.responses.pop(0))
 
 
@@ -59,6 +62,7 @@ async def test_summarizer_returns_reflection_result() -> None:
 
     assert result.day_summary == "Summary"
     assert result.entries[0].title == "Entry"
+    assert llm.json_modes == [True]
 
 
 async def test_summarizer_limits_entries() -> None:
@@ -95,6 +99,7 @@ async def test_summarizer_repairs_invalid_json() -> None:
 
     assert result.entries[0].title == "Fixed"
     assert len(llm.calls) == 2
+    assert llm.json_modes == [True, True]
 
 
 async def test_summarizer_returns_empty_after_two_invalid_jsons() -> None:
@@ -104,4 +109,3 @@ async def test_summarizer_returns_empty_after_two_invalid_jsons() -> None:
     result = await summarizer.summarize([make_message("user", "x")], date(2026, 5, 16))
 
     assert result.entries == []
-

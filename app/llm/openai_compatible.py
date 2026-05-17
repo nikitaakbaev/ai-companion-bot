@@ -44,6 +44,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         messages: list[ChatMessage],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> LLMResponse:
         """Generate text using an OpenAI-compatible backend."""
         payload = {
@@ -56,12 +57,26 @@ class OpenAICompatibleLLMClient(LLMClient):
             "temperature": temperature if temperature is not None else self.default_temperature,
             "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
         logger.info(
             "Sending request to LLM",
-            extra={"model": self.model, "message_count": len(payload["messages"])},
+            extra={
+                "model": self.model,
+                "message_count": len(payload["messages"]),
+                "json_mode": json_mode,
+            },
         )
-        data = await self._post_chat_completions(payload)
+        try:
+            data = await self._post_chat_completions(payload)
+        except LLMResponseError as exc:
+            if not json_mode or not _looks_like_unsupported_json_mode(exc):
+                raise
+            logger.warning("LLM backend rejected JSON mode; retrying without response_format")
+            payload.pop("response_format", None)
+            data = await self._post_chat_completions(payload)
+
         content = self._extract_content(data)
         logger.info("Received response from LLM", extra={"response_length": len(content)})
         return LLMResponse(content=content, raw=data)
@@ -98,7 +113,11 @@ class OpenAICompatibleLLMClient(LLMClient):
             raise LLMConnectionError(f"LLM backend returned HTTP {response.status_code}")
         if response.status_code >= 400:
             logger.error("LLM request failed with HTTP %s", response.status_code)
-            raise LLMResponseError(f"LLM request failed with HTTP {response.status_code}")
+            body = response.text.strip()[:500]
+            message = f"LLM request failed with HTTP {response.status_code}"
+            if body:
+                message = f"{message}: {body}"
+            raise LLMResponseError(message)
 
         try:
             data = orjson.loads(response.content)
@@ -123,3 +142,15 @@ class OpenAICompatibleLLMClient(LLMClient):
         if not content.strip():
             logger.warning("LLM response content is empty")
         return content.strip()
+
+
+def _looks_like_unsupported_json_mode(exc: LLMResponseError) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "response_format",
+            "json_object",
+            "json mode",
+        )
+    )

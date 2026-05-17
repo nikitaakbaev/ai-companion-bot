@@ -34,7 +34,39 @@ def test_parse_json_with_text_around_it() -> None:
     assert decision.emotion == "happy"
 
 
+def test_parse_first_balanced_json_object() -> None:
+    raw = f"before\n{VALID_JSON}\nafter {{not json}}"
+
+    decision = parse_agent_decision(raw)
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+
+
+def test_parse_json_with_trailing_commas() -> None:
+    raw = """
+    {
+      "thought": "ok",
+      "action": "send_message",
+      "messages": ["Hi",],
+      "tool_input": {},
+      "emotion": "happy",
+      "delay_seconds": 1,
+    }
+    """
+
+    decision = parse_agent_decision(raw)
+
+    assert decision.normalized_messages() == ["Hi"]
+
+
+def test_parse_python_style_dict() -> None:
+    raw = "{'thought':'ok','action':'send_message','messages':['Hi'],'tool_input':{},'emotion':'happy','delay_seconds':1}"
+
+    decision = parse_agent_decision(raw)
+
+    assert decision.normalized_messages() == ["Hi"]
+
+
 def test_invalid_json_raises_parse_error() -> None:
     with pytest.raises(AgentDecisionParseError):
         parse_agent_decision("not json")
-

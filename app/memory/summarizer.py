@@ -115,6 +115,7 @@ class DiarySummarizer:
             ],
             temperature=0.2,
             max_tokens=1200,
+            json_mode=True,
         )
         result = await self._parse_or_repair(response.content)
         result.entries = result.entries[: self.max_entries_per_run]
@@ -137,6 +138,7 @@ class DiarySummarizer:
             ],
             temperature=0,
             max_tokens=1200,
+            json_mode=True,
         )
         try:
             return parse_diary_reflection(repair_response.content)

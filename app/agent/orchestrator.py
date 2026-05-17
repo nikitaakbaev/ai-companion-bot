@@ -78,6 +78,7 @@ class AgentOrchestrator:
             messages=llm_messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            json_mode=True,
         )
         logger.info("Received raw agent response", extra={"raw_response_length": len(response.content)})
 
@@ -98,6 +99,7 @@ class AgentOrchestrator:
             ],
             temperature=0,
             max_tokens=self.max_tokens,
+            json_mode=True,
         )
         logger.info(
             "Received repaired agent response",

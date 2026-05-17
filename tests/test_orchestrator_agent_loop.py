@@ -8,14 +8,17 @@ class SequenceLLMClient(LLMClient):
     def __init__(self, responses: list[str]) -> None:
         self.responses = responses
         self.calls: list[list[ChatMessage]] = []
+        self.json_modes: list[bool] = []
 
     async def generate_text(
         self,
         messages: list[ChatMessage],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> LLMResponse:
         self.calls.append(messages)
+        self.json_modes.append(json_mode)
         return LLMResponse(content=self.responses.pop(0))
 
 
@@ -47,6 +50,7 @@ async def test_decide_parses_valid_json() -> None:
     decision = await make_orchestrator(llm).decide([], {"event_type": "test"})
 
     assert decision.action == AgentActionType.SEND_MESSAGE
+    assert llm.json_modes == [True]
     assert decision.normalized_messages() == ["Привет"]
 
 
@@ -101,6 +105,7 @@ async def test_decide_uses_repair_retry() -> None:
 
     assert decision.action == AgentActionType.IGNORE
     assert len(llm.calls) == 2
+    assert llm.json_modes == [True, True]
 
 
 async def test_decide_uses_fallback_after_two_parse_failures() -> None:

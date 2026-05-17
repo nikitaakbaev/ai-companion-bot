@@ -47,6 +47,25 @@ def test_parse_diary_json_with_text_around() -> None:
     assert result.entries[0].source_date.isoformat() == "2026-05-16"
 
 
+def test_parse_diary_json_with_trailing_commas() -> None:
+    raw = """
+    {
+      "day_summary": "Summary",
+      "entries": [
+        {
+          "title": "Entry",
+          "content": "Content",
+          "source_date": "2026-05-16",
+        },
+      ],
+    }
+    """
+
+    result = parse_diary_reflection(raw)
+
+    assert result.entries[0].title == "Entry"
+
+
 def test_invalid_diary_json_raises() -> None:
     with pytest.raises(DiaryReflectionParseError):
         parse_diary_reflection("not json")
@@ -60,4 +79,3 @@ def test_diary_importance_validation() -> None:
             importance=11,
             source_date=date(2026, 5, 16),
         )
-

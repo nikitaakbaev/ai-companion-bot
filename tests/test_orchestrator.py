@@ -14,6 +14,7 @@ class FakeLLMClient(LLMClient):
         messages: list[ChatMessage],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> LLMResponse:
         self.calls.append(messages)
         return LLMResponse(content=self.content)
@@ -54,4 +55,3 @@ async def test_orchestrator_returns_fallback_for_empty_reply() -> None:
     reply = await orchestrator.generate_reply([])
 
     assert reply == EMPTY_REPLY_FALLBACK
-
