@@ -22,12 +22,26 @@ class SequenceLLMClient(LLMClient):
         return LLMResponse(content=self.responses.pop(0))
 
 
-def make_orchestrator(llm_client: LLMClient) -> AgentOrchestrator:
+class SequenceResponseVerifier:
+    def __init__(self, verdicts: list[bool]) -> None:
+        self.verdicts = verdicts
+        self.candidate_messages: list[list[str]] = []
+
+    async def is_sendable(self, candidate_messages: list[str], **kwargs) -> bool:
+        self.candidate_messages.append(candidate_messages)
+        return self.verdicts.pop(0)
+
+
+def make_orchestrator(
+    llm_client: LLMClient,
+    response_verifier: SequenceResponseVerifier | None = None,
+) -> AgentOrchestrator:
     return AgentOrchestrator(
         llm_client=llm_client,
         max_context_messages=20,
         temperature=0.7,
         max_tokens=800,
+        response_verifier=response_verifier,
     )
 
 
@@ -105,6 +119,44 @@ async def test_decide_uses_repair_retry() -> None:
 
     assert decision.action == AgentActionType.IGNORE
     assert len(llm.calls) == 2
+    assert llm.json_modes == [True, True]
+
+
+async def test_decide_repairs_when_verifier_rejects_valid_json_response() -> None:
+    llm = SequenceLLMClient(
+        [
+            """
+            {
+              "thought": "valid but unrelated",
+              "action": "send_message",
+              "messages": ["О, я заметила твою ошибку."],
+              "tool_input": {},
+              "emotion": "happy",
+              "delay_seconds": 0
+            }
+            """,
+            """
+            {
+              "thought": "fixed relevant reply",
+              "action": "send_message",
+              "messages": ["Привет-привет."],
+              "tool_input": {},
+              "emotion": "happy",
+              "delay_seconds": 0
+            }
+            """,
+        ]
+    )
+    verifier = SequenceResponseVerifier([False, True])
+
+    decision = await make_orchestrator(llm, response_verifier=verifier).decide(
+        [],
+        {"event_type": "test", "text": "Привет"},
+    )
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+    assert decision.normalized_messages() == ["Привет-привет."]
+    assert verifier.candidate_messages == [["О, я заметила твою ошибку."], ["Привет-привет."]]
     assert llm.json_modes == [True, True]
 
 

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     agent_context_messages: int = 8
     agent_max_delay_seconds: float = 0.5
     agent_typing_seconds: float = 0.2
+    response_verifier_enabled: bool = False
+    response_verifier_base_url: str | None = None
+    response_verifier_api_key: str | None = None
+    response_verifier_model: str | None = None
+    response_verifier_max_tokens: int = 200
     vision_model: str = "qwen-vl"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 

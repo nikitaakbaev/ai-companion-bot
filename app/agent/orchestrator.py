@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.agent.json_parser import AgentDecisionParseError, parse_agent_decision
 from app.agent.prompts import AGENT_RESCUE_PROMPT, AGENT_SYSTEM_PROMPT, BASIC_SYSTEM_PROMPT, JSON_REPAIR_PROMPT
+from app.agent.response_verifier import AgentResponseVerifier
 from app.agent.schemas import AgentActionType, AgentDecision, AgentEmotion
 from app.agent.tools import available_tools
 from app.database.models import AgentState, BotSettings, Message
@@ -41,11 +42,13 @@ class AgentOrchestrator:
         max_context_messages: int,
         temperature: float,
         max_tokens: int,
+        response_verifier: AgentResponseVerifier | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.max_context_messages = max_context_messages
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.response_verifier = response_verifier
 
     async def generate_reply(
         self,
@@ -91,11 +94,17 @@ class AgentOrchestrator:
         logger.info("Received raw agent response", extra={"raw_response_length": len(response.content)})
 
         try:
-            decision = parse_agent_decision(response.content)
+            decision = await self._parse_verified_decision(
+                response.content,
+                recent_messages=recent_messages,
+                event_context=event_context,
+                bot_settings=bot_settings,
+                agent_state=agent_state,
+            )
             self._log_decision(decision)
             return decision
         except AgentDecisionParseError:
-            logger.warning("Failed to parse agent decision; attempting JSON repair")
+            logger.warning("Failed to parse or verify agent decision; attempting JSON repair")
 
         repair_response = await self.llm_client.generate_text(
             messages=[
@@ -115,11 +124,17 @@ class AgentOrchestrator:
         )
 
         try:
-            decision = parse_agent_decision(repair_response.content)
+            decision = await self._parse_verified_decision(
+                repair_response.content,
+                recent_messages=recent_messages,
+                event_context=event_context,
+                bot_settings=bot_settings,
+                agent_state=agent_state,
+            )
             self._log_decision(decision)
             return decision
         except AgentDecisionParseError:
-            logger.warning("Failed to parse repaired agent decision; generating plain rescue reply")
+            logger.warning("Failed to parse or verify repaired agent decision; generating plain rescue reply")
             decision = await self._generate_rescue_decision(
                 recent_messages=recent_messages,
                 event_context=event_context,
@@ -163,7 +178,13 @@ class AgentOrchestrator:
                     emotion=AgentEmotion.NEUTRAL,
                     delay_seconds=0,
                 )
-                if self._is_rescue_decision_sendable(decision):
+                if await self._is_rescue_decision_sendable(
+                    decision,
+                    recent_messages=recent_messages,
+                    event_context=event_context,
+                    bot_settings=bot_settings,
+                    agent_state=agent_state,
+                ):
                     return decision
                 logger.warning("Plain rescue reply looked generic; retrying")
                 rejected_replies.append(content[:500])
@@ -180,6 +201,25 @@ class AgentOrchestrator:
             emotion=AgentEmotion.NEUTRAL,
             delay_seconds=0,
         )
+
+    async def _parse_verified_decision(
+        self,
+        raw_text: str,
+        recent_messages: list[Message],
+        event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
+    ) -> AgentDecision:
+        decision = parse_agent_decision(raw_text)
+        if await self._is_decision_sendable(
+            decision,
+            recent_messages=recent_messages,
+            event_context=event_context,
+            bot_settings=bot_settings,
+            agent_state=agent_state,
+        ):
+            return decision
+        raise AgentDecisionParseError("Agent decision was rejected by response verifier")
 
     def _build_agent_messages(
         self,
@@ -302,12 +342,49 @@ class AgentOrchestrator:
             },
         )
 
-    @staticmethod
-    def _is_rescue_decision_sendable(decision: AgentDecision) -> bool:
+    async def _is_decision_sendable(
+        self,
+        decision: AgentDecision,
+        recent_messages: list[Message],
+        event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
+    ) -> bool:
+        if decision.action != AgentActionType.SEND_MESSAGE:
+            return True
+        messages = decision.normalized_messages()
+        if not messages:
+            return False
+        if self.response_verifier is None:
+            return True
+        return await self.response_verifier.is_sendable(
+            candidate_messages=messages,
+            recent_messages=recent_messages,
+            event_context=event_context,
+            bot_settings=bot_settings,
+            agent_state=agent_state,
+        )
+
+    async def _is_rescue_decision_sendable(
+        self,
+        decision: AgentDecision,
+        recent_messages: list[Message],
+        event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
+    ) -> bool:
         if decision.action != AgentActionType.SEND_MESSAGE:
             return False
         messages = decision.normalized_messages()
         if not messages:
             return False
         combined_text = "\n".join(messages)
-        return not any(pattern.search(combined_text) for pattern in UNSUITABLE_RESCUE_PATTERNS)
+        if any(pattern.search(combined_text) for pattern in UNSUITABLE_RESCUE_PATTERNS):
+            return False
+        return await self._is_decision_sendable(
+            decision,
+            recent_messages=recent_messages,
+            event_context=event_context,
+            bot_settings=bot_settings,
+            agent_state=agent_state,
+        )

@@ -8,6 +8,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramNetworkError
 
 from app.agent.orchestrator import AgentOrchestrator
+from app.agent.response_verifier import AgentResponseVerifier
 from app.agent.tool_executor import ToolExecutor
 from app.bot.router import router
 from app.config import get_settings
@@ -50,11 +51,30 @@ async def main() -> None:
         default_temperature=settings.llm_temperature,
         default_max_tokens=settings.llm_max_tokens,
     )
+    response_verifier = None
+    if settings.response_verifier_enabled:
+        verifier_model = settings.response_verifier_model or settings.llm_model
+        verifier_client = OpenAICompatibleLLMClient(
+            base_url=settings.response_verifier_base_url or settings.llm_base_url,
+            api_key=settings.response_verifier_api_key or settings.llm_api_key,
+            model=verifier_model,
+            timeout_seconds=settings.llm_timeout_seconds,
+            default_temperature=0,
+            default_max_tokens=settings.response_verifier_max_tokens,
+        )
+        response_verifier = AgentResponseVerifier(
+            llm_client=verifier_client,
+            max_context_messages=settings.agent_context_messages,
+            max_tokens=settings.response_verifier_max_tokens,
+        )
+        logger.info("Response verifier enabled with model: %s", verifier_model)
+
     orchestrator = AgentOrchestrator(
         llm_client=llm_client,
         max_context_messages=settings.agent_context_messages,
         temperature=settings.agent_temperature,
         max_tokens=settings.agent_max_tokens,
+        response_verifier=response_verifier,
     )
     diary_model = settings.diary_reflection_model or settings.llm_model
     diary_llm_client = (

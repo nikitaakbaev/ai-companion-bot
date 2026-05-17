@@ -21,6 +21,11 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.agent_context_messages == 8
     assert settings.agent_max_delay_seconds == 0.5
     assert settings.agent_typing_seconds == 0.2
+    assert settings.response_verifier_enabled is False
+    assert settings.response_verifier_base_url is None
+    assert settings.response_verifier_api_key is None
+    assert settings.response_verifier_model is None
+    assert settings.response_verifier_max_tokens == 200
     assert settings.auto_create_tables is False
     assert settings.default_character_name == "Kuni"
     assert settings.message_history_limit == 50
