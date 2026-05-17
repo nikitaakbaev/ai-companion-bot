@@ -19,6 +19,7 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.agent_temperature == 0.2
     assert settings.agent_max_tokens == 2048
     assert settings.agent_context_messages == 8
+    assert settings.agent_plain_text_mode is True
     assert settings.agent_max_delay_seconds == 0.5
     assert settings.agent_typing_seconds == 0.2
     assert settings.response_verifier_enabled is False

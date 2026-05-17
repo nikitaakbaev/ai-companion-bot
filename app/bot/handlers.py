@@ -607,18 +607,27 @@ async def handle_text(
             )
             bot_settings = await get_bot_settings(session, user_id)
             agent_state = await get_or_create_agent_state(session, user_id)
-        decision = await orchestrator.decide(
-            recent_messages=recent_messages,
-            event_context={
-                "event_type": "telegram_text_message",
-                "telegram_user_id": message.from_user.id if message.from_user else None,
-                "username": message.from_user.username if message.from_user else None,
-                "first_name": message.from_user.first_name if message.from_user else None,
-                "text": message.text,
-            },
-            bot_settings=bot_settings,
-            agent_state=agent_state,
-        )
+        event_context = {
+            "event_type": "telegram_text_message",
+            "telegram_user_id": message.from_user.id if message.from_user else None,
+            "username": message.from_user.username if message.from_user else None,
+            "first_name": message.from_user.first_name if message.from_user else None,
+            "text": message.text,
+        }
+        if settings.agent_plain_text_mode:
+            decision = await orchestrator.decide_plain_reply(
+                recent_messages=recent_messages,
+                event_context=event_context,
+                bot_settings=bot_settings,
+                agent_state=agent_state,
+            )
+        else:
+            decision = await orchestrator.decide(
+                recent_messages=recent_messages,
+                event_context=event_context,
+                bot_settings=bot_settings,
+                agent_state=agent_state,
+            )
     except LLMClientError:
         logger.exception("LLM unavailable while processing text message")
         response = await message.answer(LLM_ERROR_TEXT)

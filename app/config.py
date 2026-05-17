@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     agent_temperature: float = 0.2
     agent_max_tokens: int = 2048
     agent_context_messages: int = 8
+    agent_plain_text_mode: bool = True
     agent_max_delay_seconds: float = 0.5
     agent_typing_seconds: float = 0.2
     response_verifier_enabled: bool = False

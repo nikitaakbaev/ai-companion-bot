@@ -8,7 +8,13 @@ from datetime import UTC, datetime
 from pydantic import ValidationError
 
 from app.agent.json_parser import AgentDecisionParseError, parse_agent_decision
-from app.agent.prompts import AGENT_RESCUE_PROMPT, AGENT_SYSTEM_PROMPT, BASIC_SYSTEM_PROMPT, JSON_REPAIR_PROMPT
+from app.agent.prompts import (
+    AGENT_RESCUE_PROMPT,
+    AGENT_SYSTEM_PROMPT,
+    BASIC_SYSTEM_PROMPT,
+    JSON_REPAIR_PROMPT,
+    PLAIN_CHAT_PROMPT,
+)
 from app.agent.response_verifier import AgentResponseVerifier
 from app.agent.schemas import AgentActionType, AgentDecision, AgentEmotion
 from app.agent.tools import available_tools
@@ -143,6 +149,81 @@ class AgentOrchestrator:
             )
             self._log_decision(decision)
             return decision
+
+    async def decide_plain_reply(
+        self,
+        recent_messages: list[Message],
+        event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
+    ) -> AgentDecision:
+        """Generate a normal text reply for ordinary chat without JSON agent loop."""
+        decision = await self._generate_plain_decision(
+            recent_messages=recent_messages,
+            event_context=event_context,
+            bot_settings=bot_settings,
+            agent_state=agent_state,
+        )
+        self._log_decision(decision)
+        return decision
+
+    async def _generate_plain_decision(
+        self,
+        recent_messages: list[Message],
+        event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
+    ) -> AgentDecision:
+        rejected_replies: list[str] = []
+        for _ in range(MAX_RESCUE_REPLY_ATTEMPTS):
+            messages = self._build_plain_messages(
+                recent_messages,
+                event_context,
+                bot_settings,
+                agent_state,
+                rejected_replies=rejected_replies,
+            )
+            response = await self.llm_client.generate_text(
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=min(self.max_tokens, 500),
+            )
+            content = response.content.strip()
+            if not content:
+                rejected_replies.append("<empty>")
+                continue
+            try:
+                decision = AgentDecision(
+                    thought="Generated plain chat reply.",
+                    action=AgentActionType.SEND_MESSAGE,
+                    messages=[content],
+                    tool_input={},
+                    emotion=AgentEmotion.NEUTRAL,
+                    delay_seconds=0,
+                )
+                if await self._is_plain_decision_sendable(
+                    decision,
+                    recent_messages=recent_messages,
+                    event_context=event_context,
+                    bot_settings=bot_settings,
+                    agent_state=agent_state,
+                ):
+                    return decision
+                logger.warning("Plain chat reply looked unsuitable; retrying")
+                rejected_replies.append(content[:500])
+            except ValidationError:
+                logger.warning("Plain chat reply was not user-facing; retrying")
+                rejected_replies.append(content[:500])
+
+        logger.warning("Failed to produce a user-facing plain reply; suppressing response")
+        return AgentDecision(
+            thought="Suppressed response because no plain user-facing reply passed validation.",
+            action=AgentActionType.IGNORE,
+            messages=[],
+            tool_input={},
+            emotion=AgentEmotion.NEUTRAL,
+            delay_seconds=0,
+        )
 
     async def _generate_rescue_decision(
         self,
@@ -302,6 +383,46 @@ class AgentOrchestrator:
         )
         return messages
 
+    def _build_plain_messages(
+        self,
+        recent_messages: list[Message],
+        event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
+        rejected_replies: list[str] | None = None,
+    ) -> list[ChatMessage]:
+        enriched_context = {
+            **event_context,
+            "current_time": datetime.now(UTC).isoformat(),
+        }
+        if bot_settings is not None:
+            enriched_context["character"] = {
+                "name": bot_settings.character_name,
+                "description": bot_settings.character_description,
+                "personality_style": bot_settings.personality_style,
+            }
+        if agent_state is not None:
+            enriched_context["agent_state"] = {
+                "last_emotion": agent_state.last_emotion,
+                "last_action_type": agent_state.last_action_type,
+            }
+        if rejected_replies:
+            enriched_context["rejected_replies"] = rejected_replies
+
+        messages = [ChatMessage(role="system", content=self._build_plain_system_prompt(bot_settings))]
+        for message in recent_messages[-self.max_context_messages :]:
+            if message.role not in {"user", "assistant"} or not message.text:
+                continue
+            messages.append(ChatMessage(role=message.role, content=message.text))
+        messages.append(
+            ChatMessage(
+                role="user",
+                content="Event context:\n"
+                + json.dumps(enriched_context, ensure_ascii=False, separators=(",", ":")),
+            )
+        )
+        return messages
+
     @staticmethod
     def _build_system_prompt(bot_settings: BotSettings | None = None) -> str:
         if bot_settings is None:
@@ -324,6 +445,20 @@ class AgentOrchestrator:
 
         return (
             f"{AGENT_RESCUE_PROMPT}\n\n"
+            "Настройки персонажа из .env/BotSettings имеют высокий приоритет.\n"
+            f"Имя персонажа: {bot_settings.character_name}\n"
+            f"Описание персонажа: {bot_settings.character_description}\n"
+            f"Стиль общения: {bot_settings.personality_style}\n"
+            "Следуй этим настройкам в обычном ответе пользователю."
+        )
+
+    @staticmethod
+    def _build_plain_system_prompt(bot_settings: BotSettings | None = None) -> str:
+        if bot_settings is None:
+            return PLAIN_CHAT_PROMPT
+
+        return (
+            f"{PLAIN_CHAT_PROMPT}\n\n"
             "Настройки персонажа из .env/BotSettings имеют высокий приоритет.\n"
             f"Имя персонажа: {bot_settings.character_name}\n"
             f"Описание персонажа: {bot_settings.character_description}\n"
@@ -366,6 +501,30 @@ class AgentOrchestrator:
         )
 
     async def _is_rescue_decision_sendable(
+        self,
+        decision: AgentDecision,
+        recent_messages: list[Message],
+        event_context: dict,
+        bot_settings: BotSettings | None = None,
+        agent_state: AgentState | None = None,
+    ) -> bool:
+        if decision.action != AgentActionType.SEND_MESSAGE:
+            return False
+        messages = decision.normalized_messages()
+        if not messages:
+            return False
+        combined_text = "\n".join(messages)
+        if any(pattern.search(combined_text) for pattern in UNSUITABLE_RESCUE_PATTERNS):
+            return False
+        return await self._is_decision_sendable(
+            decision,
+            recent_messages=recent_messages,
+            event_context=event_context,
+            bot_settings=bot_settings,
+            agent_state=agent_state,
+        )
+
+    async def _is_plain_decision_sendable(
         self,
         decision: AgentDecision,
         recent_messages: list[Message],

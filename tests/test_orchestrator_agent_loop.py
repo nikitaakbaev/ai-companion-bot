@@ -68,6 +68,46 @@ async def test_decide_parses_valid_json() -> None:
     assert decision.normalized_messages() == ["Привет"]
 
 
+async def test_decide_plain_reply_uses_plain_text_without_json_mode() -> None:
+    llm = SequenceLLMClient(["Привет-привет."])
+
+    decision = await make_orchestrator(llm).decide_plain_reply(
+        [],
+        {"event_type": "telegram_text_message", "text": "Привет"},
+    )
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+    assert decision.normalized_messages() == ["Привет-привет."]
+    assert llm.json_modes == [False]
+
+
+async def test_decide_plain_reply_retries_unsuitable_plain_response() -> None:
+    llm = SequenceLLMClient(["Я рядом. Расскажи, что у тебя?", "Привет. Я слушаю."])
+
+    decision = await make_orchestrator(llm).decide_plain_reply(
+        [],
+        {"event_type": "telegram_text_message", "text": "Привет"},
+    )
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+    assert decision.normalized_messages() == ["Привет. Я слушаю."]
+    assert llm.json_modes == [False, False]
+    assert "rejected_replies" in llm.calls[-1][-1].content
+
+
+async def test_decide_plain_reply_suppresses_when_no_response_is_sendable() -> None:
+    llm = SequenceLLMClient(["Here is the corrected valid JSON response", "Вот исправленный JSON"])
+
+    decision = await make_orchestrator(llm).decide_plain_reply(
+        [],
+        {"event_type": "telegram_text_message", "text": "Привет"},
+    )
+
+    assert decision.action == AgentActionType.IGNORE
+    assert decision.normalized_messages() == []
+    assert llm.json_modes == [False, False]
+
+
 async def test_decide_puts_character_settings_into_system_prompt() -> None:
     llm = SequenceLLMClient(
         [
