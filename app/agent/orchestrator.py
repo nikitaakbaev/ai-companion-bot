@@ -13,6 +13,7 @@ from app.agent.prompts import (
     AGENT_SYSTEM_PROMPT,
     BASIC_SYSTEM_PROMPT,
     JSON_REPAIR_PROMPT,
+    PLAIN_CONTINUATION_PROMPT,
     PLAIN_CHAT_PROMPT,
 )
 from app.agent.response_verifier import AgentResponseVerifier
@@ -23,6 +24,9 @@ from app.llm.client import ChatMessage, LLMClient
 
 EMPTY_REPLY_FALLBACK = "Я задумался и не смог нормально сформулировать ответ. Попробуй написать ещё раз."
 MAX_RESCUE_REPLY_ATTEMPTS = 2
+MAX_PLAIN_CONTINUATION_ATTEMPTS = 2
+INCOMPLETE_REPLY_MIN_LENGTH = 80
+TERMINAL_REPLY_CHARS = frozenset(".!?…。！？)")
 UNSUITABLE_RESCUE_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -186,9 +190,13 @@ class AgentOrchestrator:
             response = await self.llm_client.generate_text(
                 messages=messages,
                 temperature=self.temperature,
-                max_tokens=min(self.max_tokens, 500),
+                max_tokens=self.max_tokens,
             )
-            content = response.content.strip()
+            content = await self._complete_plain_response_if_needed(
+                content=response.content.strip(),
+                response_finish_reason=response.finish_reason,
+                messages=messages,
+            )
             if not content:
                 rejected_replies.append("<empty>")
                 continue
@@ -224,6 +232,40 @@ class AgentOrchestrator:
             emotion=AgentEmotion.NEUTRAL,
             delay_seconds=0,
         )
+
+    async def _complete_plain_response_if_needed(
+        self,
+        content: str,
+        response_finish_reason: str | None,
+        messages: list[ChatMessage],
+    ) -> str:
+        completed = content.strip()
+        for _ in range(MAX_PLAIN_CONTINUATION_ATTEMPTS):
+            if not self._looks_incomplete_reply(completed, response_finish_reason):
+                break
+
+            logger.warning("Plain reply looks incomplete; requesting continuation")
+            continuation_response = await self.llm_client.generate_text(
+                messages=[
+                    *messages,
+                    ChatMessage(role="assistant", content=completed),
+                    ChatMessage(
+                        role="user",
+                        content=PLAIN_CONTINUATION_PROMPT.replace(
+                            "{partial_response}",
+                            completed[-2000:],
+                        ),
+                    ),
+                ],
+                temperature=0,
+                max_tokens=min(self.max_tokens, 500),
+            )
+            continuation = continuation_response.content.strip()
+            if not continuation:
+                break
+            completed = self._join_continuation(completed, continuation)
+            response_finish_reason = continuation_response.finish_reason
+        return completed.strip()
 
     async def _generate_rescue_decision(
         self,
@@ -547,3 +589,29 @@ class AgentOrchestrator:
             bot_settings=bot_settings,
             agent_state=agent_state,
         )
+
+    @staticmethod
+    def _looks_incomplete_reply(content: str, finish_reason: str | None) -> bool:
+        text = content.strip()
+        if not text:
+            return False
+        if finish_reason == "length":
+            return True
+        if len(text) < INCOMPLETE_REPLY_MIN_LENGTH:
+            return False
+        stripped = text.rstrip("*_`~ \t\r\n\"'»）)]}")
+        if not stripped:
+            return False
+        return stripped[-1] not in TERMINAL_REPLY_CHARS
+
+    @staticmethod
+    def _join_continuation(prefix: str, continuation: str) -> str:
+        left = prefix.rstrip()
+        right = continuation.strip()
+        if not left:
+            return right
+        if not right:
+            return left
+        if right.startswith((".", ",", "!", "?", ":", ";", "…")):
+            return f"{left}{right}"
+        return f"{left} {right}"

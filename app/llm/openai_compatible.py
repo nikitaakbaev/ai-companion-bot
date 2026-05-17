@@ -78,8 +78,9 @@ class OpenAICompatibleLLMClient(LLMClient):
             data = await self._post_chat_completions(payload)
 
         content = self._extract_content(data)
+        finish_reason = self._extract_finish_reason(data)
         logger.info("Received response from LLM", extra={"response_length": len(content)})
-        return LLMResponse(content=content, raw=data)
+        return LLMResponse(content=content, raw=data, finish_reason=finish_reason)
 
     @retry(
         retry=retry_if_exception_type(LLMConnectionError),
@@ -142,6 +143,16 @@ class OpenAICompatibleLLMClient(LLMClient):
         if not content.strip():
             logger.warning("LLM response content is empty")
         return content.strip()
+
+    @staticmethod
+    def _extract_finish_reason(data: dict) -> str | None:
+        try:
+            finish_reason = data["choices"][0].get("finish_reason")
+        except (KeyError, IndexError, TypeError):
+            return None
+        if not isinstance(finish_reason, str):
+            return None
+        return finish_reason
 
 
 def _looks_like_unsupported_json_mode(exc: LLMResponseError) -> bool:

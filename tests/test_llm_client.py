@@ -17,7 +17,7 @@ async def test_client_posts_to_chat_completions_and_parses_response() -> None:
         assert '"model":"test-model"' in payload
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": "hello"}}]},
+            json={"choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}]},
         )
 
     client = OpenAICompatibleLLMClient(
@@ -30,6 +30,7 @@ async def test_client_posts_to_chat_completions_and_parses_response() -> None:
     response = await client.generate_text([ChatMessage(role="user", content="Hi")])
 
     assert response.content == "hello"
+    assert response.finish_reason == "stop"
     assert len(requests) == 1
 
 

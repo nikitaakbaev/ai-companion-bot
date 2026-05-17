@@ -5,7 +5,7 @@ from app.llm.client import ChatMessage, LLMClient, LLMResponse
 
 
 class SequenceLLMClient(LLMClient):
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[str | LLMResponse]) -> None:
         self.responses = responses
         self.calls: list[list[ChatMessage]] = []
         self.json_modes: list[bool] = []
@@ -19,7 +19,10 @@ class SequenceLLMClient(LLMClient):
     ) -> LLMResponse:
         self.calls.append(messages)
         self.json_modes.append(json_mode)
-        return LLMResponse(content=self.responses.pop(0))
+        response = self.responses.pop(0)
+        if isinstance(response, LLMResponse):
+            return response
+        return LLMResponse(content=response)
 
 
 class SequenceResponseVerifier:
@@ -105,6 +108,39 @@ async def test_decide_plain_reply_suppresses_when_no_response_is_sendable() -> N
 
     assert decision.action == AgentActionType.IGNORE
     assert decision.normalized_messages() == []
+    assert llm.json_modes == [False, False]
+
+
+async def test_decide_plain_reply_continues_when_finish_reason_is_length() -> None:
+    llm = SequenceLLMClient(
+        [
+            LLMResponse(content="У меня отлично. Ты заряжаешь меня своим", finish_reason="length"),
+            LLMResponse(content="теплом.", finish_reason="stop"),
+        ]
+    )
+
+    decision = await make_orchestrator(llm).decide_plain_reply(
+        [],
+        {"event_type": "telegram_text_message", "text": "Как дела?"},
+    )
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+    assert decision.normalized_messages() == ["У меня отлично. Ты заряжаешь меня своим теплом."]
+    assert llm.json_modes == [False, False]
+    assert "partial_response" in llm.calls[1][-1].content
+
+
+async def test_decide_plain_reply_continues_long_sentence_without_terminal_punctuation() -> None:
+    partial = "У меня всё хорошо, и я улыбаюсь, потому что твои сообщения делают этот день теплее своим"
+    llm = SequenceLLMClient([partial, "настроением."])
+
+    decision = await make_orchestrator(llm).decide_plain_reply(
+        [],
+        {"event_type": "telegram_text_message", "text": "Как ты?"},
+    )
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+    assert decision.normalized_messages() == [f"{partial} настроением."]
     assert llm.json_modes == [False, False]
 
 

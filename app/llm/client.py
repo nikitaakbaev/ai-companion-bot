@@ -17,6 +17,7 @@ class LLMResponse:
 
     content: str
     raw: dict | None = None
+    finish_reason: str | None = None
 
 
 class LLMClientError(Exception):
