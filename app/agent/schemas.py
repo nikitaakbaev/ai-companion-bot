@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 MAX_AGENT_MESSAGE_LENGTH = 2000
-SERVICE_LEAK_FALLBACK_MESSAGE = "Я тебя поняла. Можешь чуть уточнить, что именно ты хочешь?"
 SERVICE_LEAK_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -16,11 +15,15 @@ SERVICE_LEAK_PATTERNS = tuple(
         r"\bschema\b",
         r"\btool\b",
         r"\baction\b",
+        r"\bcorrect",
+        r"\bfixed\b",
         r"валидн",
         r"схем",
         r"формат",
-        r"исправленн",
+        r"исправ",
         r"служебн",
+        r"теперь\s+я\s+зна",
+        r"как\s+надо",
     )
 )
 
@@ -117,7 +120,7 @@ class AgentDecision(BaseModel):
             if not text:
                 continue
             if _looks_like_service_leak(text):
-                text = SERVICE_LEAK_FALLBACK_MESSAGE
+                continue
             messages.append(text[:MAX_AGENT_MESSAGE_LENGTH])
         return messages
 

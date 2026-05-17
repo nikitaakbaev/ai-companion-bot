@@ -108,6 +108,41 @@ async def test_decide_uses_repair_retry() -> None:
     assert llm.json_modes == [True, True]
 
 
+async def test_decide_repairs_service_leak_in_messages_with_context() -> None:
+    llm = SequenceLLMClient(
+        [
+            """
+            {
+              "thought": "leaked service text",
+              "action": "send_message",
+              "messages": ["Спасибо, что исправил! Теперь я знаю, как надо!~"],
+              "tool_input": {},
+              "emotion": "happy",
+              "delay_seconds": 0
+            }
+            """,
+            """
+            {
+              "thought": "fixed user-facing reply",
+              "action": "send_message",
+              "messages": ["Да, я с тобой."],
+              "tool_input": {},
+              "emotion": "caring",
+              "delay_seconds": 0
+            }
+            """,
+        ]
+    )
+
+    decision = await make_orchestrator(llm).decide([], {"event_type": "test", "text": "Ты со мной?"})
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+    assert decision.normalized_messages() == ["Да, я с тобой."]
+    assert len(llm.calls) == 2
+    assert "Event context" in llm.calls[1][-2].content
+    assert "Спасибо, что исправил" in llm.calls[1][-1].content
+
+
 async def test_decide_uses_fallback_after_two_parse_failures() -> None:
     llm = SequenceLLMClient(["bad", "still bad"])
 

@@ -91,7 +91,7 @@ class AgentOrchestrator:
 
         repair_response = await self.llm_client.generate_text(
             messages=[
-                ChatMessage(role="system", content=AGENT_SYSTEM_PROMPT),
+                *llm_messages,
                 ChatMessage(
                     role="user",
                     content=JSON_REPAIR_PROMPT.replace("{raw_text}", response.content[:4000]),

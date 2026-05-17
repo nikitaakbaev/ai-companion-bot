@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.agent.schemas import AgentActionType, AgentDecision, SERVICE_LEAK_FALLBACK_MESSAGE
+from app.agent.schemas import AgentActionType, AgentDecision
 
 
 def test_valid_send_message_decision() -> None:
@@ -55,19 +55,26 @@ def test_common_action_alias_is_normalized() -> None:
     assert decision.delay_seconds == 0
 
 
-def test_service_json_leak_message_is_replaced() -> None:
+def test_service_json_leak_message_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        AgentDecision(
+            action="send_message",
+            messages=["Here is the corrected valid JSON schema response"],
+        )
+
+
+def test_russian_service_json_leak_message_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        AgentDecision(
+            action="send_message",
+            messages=["Спасибо, что исправил! Теперь я знаю, как надо!~"],
+        )
+
+
+def test_service_leak_is_dropped_from_mixed_messages() -> None:
     decision = AgentDecision(
         action="send_message",
-        messages=["Here is the corrected valid JSON schema response"],
+        messages=["Спасибо, что исправил! Теперь я знаю, как надо!~", "Нормальный ответ."],
     )
 
-    assert decision.normalized_messages() == [SERVICE_LEAK_FALLBACK_MESSAGE]
-
-
-def test_russian_service_json_leak_message_is_replaced() -> None:
-    decision = AgentDecision(
-        action="send_message",
-        messages=["Вот исправленный валидный JSON, как вы просили"],
-    )
-
-    assert decision.normalized_messages() == [SERVICE_LEAK_FALLBACK_MESSAGE]
+    assert decision.normalized_messages() == ["Нормальный ответ."]
