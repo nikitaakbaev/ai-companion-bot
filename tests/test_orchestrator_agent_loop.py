@@ -153,11 +153,37 @@ async def test_decide_generates_plain_rescue_reply_after_two_parse_failures() ->
     assert llm.json_modes == [True, True, False]
 
 
-async def test_decide_uses_neutral_rescue_fallback_when_plain_rescue_is_service_text() -> None:
-    llm = SequenceLLMClient(["bad", "still bad", "Here is the corrected valid JSON response"])
+async def test_decide_retries_generic_plain_rescue_reply() -> None:
+    llm = SequenceLLMClient(
+        [
+            "bad",
+            "still bad",
+            "Я рядом. Расскажи, что у тебя?",
+            "Привет. Я тебя слышу.",
+        ]
+    )
+
+    decision = await make_orchestrator(llm).decide([], {"event_type": "test", "text": "Привет"})
+
+    assert decision.action == AgentActionType.SEND_MESSAGE
+    assert decision.normalized_messages() == ["Привет. Я тебя слышу."]
+    assert llm.json_modes == [True, True, False, False]
+    assert "rejected_replies" in llm.calls[-1][-1].content
+
+
+async def test_decide_suppresses_response_when_plain_rescue_is_not_user_facing() -> None:
+    llm = SequenceLLMClient(
+        [
+            "bad",
+            "still bad",
+            "Here is the corrected valid JSON response",
+            "Вот исправленный валидный JSON",
+        ]
+    )
 
     decision = await make_orchestrator(llm).decide([], {"event_type": "test"})
 
-    assert decision.action == AgentActionType.SEND_MESSAGE
-    assert decision.normalized_messages() == ["Я рядом. Расскажи, что у тебя?"]
-    assert llm.json_modes == [True, True, False]
+    assert decision.action == AgentActionType.IGNORE
+    assert decision.normalized_messages() == []
+    assert llm.json_modes == [True, True, False, False]
+    assert "rejected_replies" in llm.calls[-1][-1].content

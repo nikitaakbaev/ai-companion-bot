@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 
 from pydantic import ValidationError
@@ -14,7 +15,19 @@ from app.database.models import AgentState, BotSettings, Message
 from app.llm.client import ChatMessage, LLMClient
 
 EMPTY_REPLY_FALLBACK = "Я задумался и не смог нормально сформулировать ответ. Попробуй написать ещё раз."
-RESCUE_REPLY_FALLBACK = "Я рядом. Расскажи, что у тебя?"
+MAX_RESCUE_REPLY_ATTEMPTS = 2
+UNSUITABLE_RESCUE_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"я\s+немного\s+запут",
+        r"напиши\s+е[щш]е?\s+раз",
+        r"попробуй\s+написать\s+е[щш]е?\s+раз",
+        r"я\s+рядом[.!]?\s+расскажи",
+        r"расскажи,\s+что\s+у\s+тебя",
+        r"не\s+смог\w*\s+сформулировать",
+        r"не\s+могу\s+ответить",
+    )
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,32 +136,50 @@ class AgentOrchestrator:
         bot_settings: BotSettings | None = None,
         agent_state: AgentState | None = None,
     ) -> AgentDecision:
-        messages = self._build_rescue_messages(recent_messages, event_context, bot_settings, agent_state)
-        response = await self.llm_client.generate_text(
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=min(self.max_tokens, 300),
+        rejected_replies: list[str] = []
+        for _ in range(MAX_RESCUE_REPLY_ATTEMPTS):
+            messages = self._build_rescue_messages(
+                recent_messages,
+                event_context,
+                bot_settings,
+                agent_state,
+                rejected_replies=rejected_replies,
+            )
+            response = await self.llm_client.generate_text(
+                messages=messages,
+                temperature=self.temperature,
+                max_tokens=min(self.max_tokens, 300),
+            )
+            content = response.content.strip()
+            if not content:
+                rejected_replies.append("<empty>")
+                continue
+            try:
+                decision = AgentDecision(
+                    thought="Generated a plain user-facing reply after structured JSON failures.",
+                    action=AgentActionType.SEND_MESSAGE,
+                    messages=[content],
+                    tool_input={},
+                    emotion=AgentEmotion.NEUTRAL,
+                    delay_seconds=0,
+                )
+                if self._is_rescue_decision_sendable(decision):
+                    return decision
+                logger.warning("Plain rescue reply looked generic; retrying")
+                rejected_replies.append(content[:500])
+            except ValidationError:
+                logger.warning("Plain rescue reply was not user-facing; retrying")
+                rejected_replies.append(content[:500])
+
+        logger.warning("Failed to produce a user-facing rescue reply; suppressing response")
+        return AgentDecision(
+            thought="Suppressed response because no user-facing reply passed validation.",
+            action=AgentActionType.IGNORE,
+            messages=[],
+            tool_input={},
+            emotion=AgentEmotion.NEUTRAL,
+            delay_seconds=0,
         )
-        content = response.content.strip() or RESCUE_REPLY_FALLBACK
-        try:
-            return AgentDecision(
-                thought="Generated a plain user-facing reply after structured JSON failures.",
-                action=AgentActionType.SEND_MESSAGE,
-                messages=[content],
-                tool_input={},
-                emotion=AgentEmotion.NEUTRAL,
-                delay_seconds=0,
-            )
-        except ValidationError:
-            logger.warning("Plain rescue reply was not user-facing; using neutral rescue fallback")
-            return AgentDecision(
-                thought="Used neutral rescue fallback after structured JSON failures.",
-                action=AgentActionType.SEND_MESSAGE,
-                messages=[RESCUE_REPLY_FALLBACK],
-                tool_input={},
-                emotion=AgentEmotion.NEUTRAL,
-                delay_seconds=0,
-            )
 
     def _build_agent_messages(
         self,
@@ -197,6 +228,7 @@ class AgentOrchestrator:
         event_context: dict,
         bot_settings: BotSettings | None = None,
         agent_state: AgentState | None = None,
+        rejected_replies: list[str] | None = None,
     ) -> list[ChatMessage]:
         enriched_context = {
             **event_context,
@@ -213,6 +245,8 @@ class AgentOrchestrator:
                 "last_emotion": agent_state.last_emotion,
                 "last_action_type": agent_state.last_action_type,
             }
+        if rejected_replies:
+            enriched_context["rejected_replies"] = rejected_replies
 
         messages = [ChatMessage(role="system", content=self._build_rescue_system_prompt(bot_settings))]
         for message in recent_messages[-self.max_context_messages :]:
@@ -267,3 +301,13 @@ class AgentOrchestrator:
                 "message_count": len(decision.normalized_messages()),
             },
         )
+
+    @staticmethod
+    def _is_rescue_decision_sendable(decision: AgentDecision) -> bool:
+        if decision.action != AgentActionType.SEND_MESSAGE:
+            return False
+        messages = decision.normalized_messages()
+        if not messages:
+            return False
+        combined_text = "\n".join(messages)
+        return not any(pattern.search(combined_text) for pattern in UNSUITABLE_RESCUE_PATTERNS)
