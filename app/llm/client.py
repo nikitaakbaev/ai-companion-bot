@@ -40,6 +40,7 @@ class LLMClient:
         messages: list[ChatMessage],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_format: dict | None = None,
         json_mode: bool = False,
     ) -> LLMResponse:
         """Generate text from chat messages."""

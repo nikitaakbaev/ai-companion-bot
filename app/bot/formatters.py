@@ -2,6 +2,7 @@
 
 from app.database.models import AgentAction, BotSettings, DiaryEntry, Message
 from app.memory.diary import DiaryServiceResult
+from app.memory.rag import RelevantMemory
 
 
 def format_settings(settings: BotSettings) -> str:
@@ -92,6 +93,42 @@ def format_diary_full(entries: list[DiaryEntry]) -> str:
     return "\n\n".join(lines)
 
 
+def format_memory(entries: list[DiaryEntry]) -> str:
+    """Format memory entries and embedding status."""
+    if not entries:
+        return "Memory is empty. Create diary entries with /sleep first."
+
+    lines = ["Memory:\n"]
+    for index, entry in enumerate(entries, start=1):
+        source_date = entry.source_date.isoformat() if entry.source_date else "-"
+        embedding = "yes" if entry.embedding_id else "no"
+        lines.append(
+            f"{index}. {entry.title}\n"
+            f"Importance: {entry.importance}/10\n"
+            f"Date: {source_date}\n"
+            f"Embedding: {embedding}"
+        )
+    return "\n\n".join(lines)
+
+
+def format_memory_search(memories: list[RelevantMemory]) -> str:
+    """Format memory search results."""
+    if not memories:
+        return "No relevant memories found."
+
+    lines = ["Found memories:\n"]
+    for index, memory in enumerate(memories, start=1):
+        text = memory.text.replace("\n", " ").strip()
+        if len(text) > 500:
+            text = text[:497] + "..."
+        lines.append(
+            f"{index}. score={memory.score:.2f}\n"
+            f"Title: {memory.title or '-'}\n"
+            f"Text: {text}"
+        )
+    return "\n\n".join(lines)
+
+
 def format_sleep_result(result: DiaryServiceResult) -> str:
     """Format /sleep result."""
     if result.status == "created":
@@ -101,6 +138,10 @@ def format_sleep_result(result: DiaryServiceResult) -> str:
         )
         if result.day_summary:
             text += f"\n\nКраткая сводка:\n{result.day_summary}"
+        if result.indexed_count:
+            text += f"\n\nПроиндексировано в память: {result.indexed_count}"
+        if result.indexing_failed:
+            text += "\nПамять: дневник сохранён, но часть embeddings не создана. Проверь логи."
         return text
 
     if result.status == "skipped":

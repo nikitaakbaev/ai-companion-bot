@@ -82,10 +82,14 @@ class DiarySummarizer:
         llm_client: LLMClient,
         max_entries_per_run: int,
         max_input_chars: int,
+        max_tokens: int = 800,
+        user_prompt_mode: bool = False,
     ) -> None:
         self.llm_client = llm_client
         self.max_entries_per_run = max_entries_per_run
         self.max_input_chars = max_input_chars
+        self.max_tokens = max_tokens
+        self.user_prompt_mode = user_prompt_mode
 
     async def summarize(
         self,
@@ -109,13 +113,9 @@ class DiarySummarizer:
             f"{truncated_history}"
         )
         response = await self.llm_client.generate_text(
-            messages=[
-                ChatMessage(role="system", content=DIARY_REFLECTION_PROMPT),
-                ChatMessage(role="user", content=user_prompt),
-            ],
+            messages=self._build_messages(user_prompt),
             temperature=0.2,
-            max_tokens=1200,
-            json_mode=True,
+            max_tokens=self.max_tokens,
         )
         result = await self._parse_or_repair(response.content)
         result.entries = result.entries[: self.max_entries_per_run]
@@ -123,23 +123,23 @@ class DiarySummarizer:
         return result
 
     async def _parse_or_repair(self, raw_text: str) -> DiaryReflectionResult:
+        if not raw_text.strip():
+            logger.warning("Diary reflection response is empty; skipping repair")
+            return DiaryReflectionResult(entries=[], day_summary=None)
+
         try:
             return parse_diary_reflection(raw_text)
         except DiaryReflectionParseError:
             logger.warning("Failed to parse diary reflection; attempting repair")
 
         repair_response = await self.llm_client.generate_text(
-            messages=[
-                ChatMessage(role="system", content=DIARY_REFLECTION_PROMPT),
-                ChatMessage(
-                    role="user",
-                    content=DIARY_REPAIR_PROMPT.replace("{raw_text}", raw_text[:4000]),
-                ),
-            ],
+            messages=self._build_repair_messages(raw_text),
             temperature=0,
-            max_tokens=1200,
-            json_mode=True,
+            max_tokens=self.max_tokens,
         )
+        if not repair_response.content.strip():
+            logger.warning("Diary reflection repair response is empty")
+            return DiaryReflectionResult(entries=[], day_summary=None)
         try:
             return parse_diary_reflection(repair_response.content)
         except DiaryReflectionParseError:
@@ -154,3 +154,23 @@ class DiarySummarizer:
             text = (message.text or "").replace("\n", " ").strip()
             lines.append(f"[{created_at}] {message.role}: {text}")
         return "\n".join(lines)
+
+    def _build_messages(self, user_prompt: str) -> list[ChatMessage]:
+        if self.user_prompt_mode:
+            content = DIARY_REFLECTION_PROMPT
+            if user_prompt:
+                content += "\n\n" + user_prompt
+            return [ChatMessage(role="user", content=content)]
+        return [
+            ChatMessage(role="system", content=DIARY_REFLECTION_PROMPT),
+            ChatMessage(role="user", content=user_prompt),
+        ]
+
+    def _build_repair_messages(self, raw_text: str) -> list[ChatMessage]:
+        repair_prompt = DIARY_REPAIR_PROMPT.replace("{raw_text}", raw_text[:4000])
+        if self.user_prompt_mode:
+            return [ChatMessage(role="user", content=f"{DIARY_REFLECTION_PROMPT}\n\n{repair_prompt}")]
+        return [
+            ChatMessage(role="system", content=DIARY_REFLECTION_PROMPT),
+            ChatMessage(role="user", content=repair_prompt),
+        ]

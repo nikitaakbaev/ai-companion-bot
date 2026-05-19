@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
@@ -461,6 +461,41 @@ async def get_recent_diary_entries(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def get_diary_entries_for_user(
+    session: AsyncSession,
+    user_id: int,
+) -> list[DiaryEntry]:
+    """Return all diary entries for a user oldest first."""
+    result = await session.execute(
+        select(DiaryEntry)
+        .where(DiaryEntry.user_id == user_id)
+        .order_by(DiaryEntry.created_at.asc(), DiaryEntry.id.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def update_diary_entry_embedding_id(
+    session: AsyncSession,
+    entry_id: int,
+    embedding_id: str,
+) -> None:
+    """Persist the vector-store id for a diary entry."""
+    result = await session.execute(select(DiaryEntry).where(DiaryEntry.id == entry_id))
+    entry = result.scalar_one()
+    entry.embedding_id = embedding_id
+    await session.commit()
+
+
+async def delete_diary_entries_for_user(
+    session: AsyncSession,
+    user_id: int,
+) -> int:
+    """Delete all diary entries for a user and return deleted count."""
+    result = await session.execute(delete(DiaryEntry).where(DiaryEntry.user_id == user_id))
+    await session.commit()
+    return int(result.rowcount or 0)
 
 
 async def get_recent_agent_actions(

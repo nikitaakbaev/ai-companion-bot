@@ -62,18 +62,26 @@ messages — это текст, который увидит пользовате
 Используй, если считаешь, что сейчас лучше не отвечать.
 
 3. remember
-Заглушка будущей памяти. Пока не используй без необходимости.
+Сохраняет важный факт в память.
 
 4. read_diary
-Заглушка будущего дневника. Пока не используй без необходимости.
+Читает последние записи дневника.
 
 5. sleep
-Заглушка будущей дневниковой рефлексии. Пока не используй без необходимости.
+Создаёт дневниковую рефлексию по недавнему диалогу.
 
 6. take_photo
-Заглушка будущей генерации изображений. Пока не используй без необходимости.
+Генерирует фото/selfie через Stable Waifu или другой image provider.
+Для Stable Waifu пиши в tool_input.scene_tags только короткие lowercase anime tags через запятую.
+Не пиши prose prompt, предложения или длинные описания.
+Не повторяй базовую внешность персонажа, она добавляется системой.
 
-7. analyze_image
+7. update_image_base_prompt
+Меняет runtime базовые Stable Waifu tags постоянного образа.
+Используй только если пользователь явно просит изменить базовый prompt/внешность/постоянный образ.
+tool_input: {"add_tags":"...", "remove_tags":"...", "set_tags":"..."}.
+
+8. analyze_image
 Заглушка будущего vision. Пока не используй без необходимости.
 
 Правила:
@@ -111,7 +119,7 @@ JSON_REPAIR_PROMPT = """
 Ты вернул невалидный JSON. Исправь ответ и верни только валидный JSON по схеме:
 {
   "thought": "string",
-  "action": "send_message | ignore | remember | read_diary | sleep | take_photo | analyze_image",
+  "action": "send_message | ignore | remember | read_diary | sleep | take_photo | update_image_base_prompt | analyze_image",
   "messages": ["string"],
   "tool_input": {},
   "emotion": "neutral | happy | sad | annoyed | playful | caring",

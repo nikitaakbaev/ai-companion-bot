@@ -10,4 +10,7 @@ data/*
 *.db
 *.sqlite
 *.log
-
+*.session
+*.session-journal
+data/userbot/
+data/generated_images/

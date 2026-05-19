@@ -65,6 +65,123 @@ async def test_client_allows_empty_content() -> None:
     assert response.content == ""
 
 
+async def test_client_ignores_reasoning_content_when_content_is_empty() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "reasoning_content": "draft json",
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = OpenAICompatibleLLMClient(
+        base_url="http://llm.test/v1",
+        api_key="secret",
+        model="test-model",
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = await client.generate_text([ChatMessage(role="user", content="Hi")])
+
+    assert response.content == ""
+
+
+async def test_client_extracts_structured_json_from_reasoning_content() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "reasoning_content": """
+                            Thinking...
+                            {
+                              "thought": "ok",
+                              "action": "take_photo",
+                              "messages": ["Смотри"],
+                              "tool_input": {"description": "selfie"},
+                              "emotion": "shy",
+                              "delay_seconds": 0
+                            }
+                            """,
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = OpenAICompatibleLLMClient(
+        base_url="http://llm.test/v1",
+        api_key="secret",
+        model="test-model",
+        transport=httpx.MockTransport(handler),
+    )
+
+    response = await client.generate_text([ChatMessage(role="user", content="Hi")])
+
+    assert '"action": "take_photo"' in response.content
+    assert "Thinking" not in response.content
+
+
+async def test_client_can_disable_qwen_thinking() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    client = OpenAICompatibleLLMClient(
+        base_url="http://llm.test/v1",
+        api_key="secret",
+        model="test-model",
+        disable_thinking=True,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.generate_text(
+        [
+            ChatMessage(role="system", content="Rules"),
+            ChatMessage(role="user", content="Hi"),
+        ]
+    )
+
+    payload = requests[0].content.decode("utf-8")
+    assert '"chat_template_kwargs":{"enable_thinking":false}' in payload
+    assert "Hi\\n/no_think" in payload
+
+
+async def test_client_can_request_response_format() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    client = OpenAICompatibleLLMClient(
+        base_url="http://llm.test/v1",
+        api_key="secret",
+        model="test-model",
+        transport=httpx.MockTransport(handler),
+    )
+
+    await client.generate_text(
+        [ChatMessage(role="user", content="Hi")],
+        response_format={"type": "json_schema", "json_schema": {"name": "x", "schema": {}}},
+    )
+
+    payload = requests[0].content.decode("utf-8")
+    assert '"response_format":{"type":"json_schema"' in payload
+
+
 async def test_client_raises_connection_error_on_connect_error() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("cannot connect", request=request)

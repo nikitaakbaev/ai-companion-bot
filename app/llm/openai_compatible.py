@@ -1,5 +1,7 @@
 """OpenAI-compatible LLM client."""
 
+import asyncio
+import json
 import logging
 from typing import Any
 
@@ -29,6 +31,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         timeout_seconds: int = 120,
         default_temperature: float = 0.7,
         default_max_tokens: int = 800,
+        disable_thinking: bool = False,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -37,50 +40,68 @@ class OpenAICompatibleLLMClient(LLMClient):
         self.timeout_seconds = timeout_seconds
         self.default_temperature = default_temperature
         self.default_max_tokens = default_max_tokens
+        self.disable_thinking = disable_thinking
         self._transport = transport
+        self._request_lock = asyncio.Lock()
 
     async def generate_text(
         self,
         messages: list[ChatMessage],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_format: dict | None = None,
         json_mode: bool = False,
     ) -> LLMResponse:
         """Generate text using an OpenAI-compatible backend."""
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": message.role, "content": message.content}
-                for message in messages
-                if message.content
-            ],
+            "messages": self._prepare_messages(messages),
             "temperature": temperature if temperature is not None else self.default_temperature,
             "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
         }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
+        if self.disable_thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        if json_mode and response_format is None:
+            response_format = {"type": "json_object"}
+        if response_format is not None:
+            payload["response_format"] = response_format
 
         logger.info(
             "Sending request to LLM",
-            extra={
-                "model": self.model,
-                "message_count": len(payload["messages"]),
-                "json_mode": json_mode,
-            },
+            extra={"model": self.model, "message_count": len(payload["messages"])},
         )
-        try:
-            data = await self._post_chat_completions(payload)
-        except LLMResponseError as exc:
-            if not json_mode or not _looks_like_unsupported_json_mode(exc):
-                raise
-            logger.warning("LLM backend rejected JSON mode; retrying without response_format")
-            payload.pop("response_format", None)
-            data = await self._post_chat_completions(payload)
-
+        async with self._request_lock:
+            try:
+                data = await self._post_chat_completions(payload)
+            except LLMResponseError as exc:
+                if json_mode and "response_format" in payload and _is_response_format_error(exc):
+                    logger.warning("LLM backend rejected response_format; retrying without JSON mode")
+                    payload.pop("response_format", None)
+                    data = await self._post_chat_completions(payload)
+                else:
+                    raise
         content = self._extract_content(data)
-        finish_reason = self._extract_finish_reason(data)
+        finish_reason = _extract_finish_reason(data)
         logger.info("Received response from LLM", extra={"response_length": len(content)})
         return LLMResponse(content=content, raw=data, finish_reason=finish_reason)
+
+    def _prepare_messages(self, messages: list[ChatMessage]) -> list[dict[str, str]]:
+        payload_messages = [
+            {"role": message.role, "content": message.content}
+            for message in messages
+            if message.content
+        ]
+        if not self.disable_thinking:
+            return payload_messages
+
+        for message in reversed(payload_messages):
+            if message["role"] != "user":
+                continue
+            content = message["content"].rstrip()
+            if "/no_think" not in content:
+                message["content"] = f"{content}\n/no_think"
+            break
+        return payload_messages
 
     @retry(
         retry=retry_if_exception_type(LLMConnectionError),
@@ -113,12 +134,13 @@ class OpenAICompatibleLLMClient(LLMClient):
             logger.warning("LLM backend returned HTTP %s", response.status_code)
             raise LLMConnectionError(f"LLM backend returned HTTP {response.status_code}")
         if response.status_code >= 400:
-            logger.error("LLM request failed with HTTP %s", response.status_code)
-            body = response.text.strip()[:500]
-            message = f"LLM request failed with HTTP {response.status_code}"
-            if body:
-                message = f"{message}: {body}"
-            raise LLMResponseError(message)
+            body = response.text[:500]
+            logger.error(
+                "LLM request failed with HTTP %s: %s",
+                response.status_code,
+                body,
+            )
+            raise LLMResponseError(f"LLM request failed with HTTP {response.status_code}: {body}")
 
         try:
             data = orjson.loads(response.content)
@@ -140,28 +162,55 @@ class OpenAICompatibleLLMClient(LLMClient):
 
         if not isinstance(content, str):
             raise LLMResponseError("LLM response content is not a string")
-        if not content.strip():
+        if content.strip():
+            return content.strip()
+
+        reasoning_content = message.get("reasoning_content")
+        if isinstance(reasoning_content, str) and reasoning_content.strip():
+            structured_content = _extract_structured_content(reasoning_content)
+            if structured_content:
+                logger.warning(
+                    "LLM response content is empty; extracted structured JSON from reasoning_content"
+                )
+                return structured_content
+            logger.warning(
+                "LLM response content is empty; ignoring reasoning_content because it is not user output"
+            )
+        else:
             logger.warning("LLM response content is empty")
-        return content.strip()
+        return ""
 
-    @staticmethod
-    def _extract_finish_reason(data: dict) -> str | None:
+
+def _extract_structured_content(text: str) -> str:
+    """Extract a complete structured JSON object from model reasoning, if present."""
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
         try:
-            finish_reason = data["choices"][0].get("finish_reason")
-        except (KeyError, IndexError, TypeError):
-            return None
-        if not isinstance(finish_reason, str):
-            return None
-        return finish_reason
+            candidate, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(candidate, dict):
+            continue
+        if _looks_like_supported_structured_response(candidate):
+            return json.dumps(candidate, ensure_ascii=False)
+    return ""
 
 
-def _looks_like_unsupported_json_mode(exc: LLMResponseError) -> bool:
-    text = str(exc).lower()
-    return any(
-        marker in text
-        for marker in (
-            "response_format",
-            "json_object",
-            "json mode",
-        )
-    )
+def _looks_like_supported_structured_response(candidate: dict[str, Any]) -> bool:
+    agent_keys = {"thought", "action", "messages", "tool_input", "emotion", "delay_seconds"}
+    diary_keys = {"entries", "day_summary"}
+    return agent_keys.issubset(candidate.keys()) or bool(diary_keys & candidate.keys())
+
+
+def _extract_finish_reason(data: dict) -> str | None:
+    try:
+        finish_reason = data["choices"][0].get("finish_reason")
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return None
+    return finish_reason if isinstance(finish_reason, str) else None
+
+
+def _is_response_format_error(exc: LLMResponseError) -> bool:
+    return "response_format" in str(exc).casefold()

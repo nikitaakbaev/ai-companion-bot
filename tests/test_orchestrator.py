@@ -14,7 +14,7 @@ class FakeLLMClient(LLMClient):
         messages: list[ChatMessage],
         temperature: float | None = None,
         max_tokens: int | None = None,
-        json_mode: bool = False,
+        response_format: dict | None = None,
     ) -> LLMResponse:
         self.calls.append(messages)
         return LLMResponse(content=self.content)
@@ -43,6 +43,28 @@ async def test_orchestrator_adds_system_prompt_and_history_in_order() -> None:
     ]
 
 
+async def test_orchestrator_filters_technical_history_messages() -> None:
+    llm = FakeLLMClient("reply")
+    orchestrator = AgentOrchestrator(
+        llm_client=llm,
+        max_context_messages=20,
+        temperature=0.7,
+        max_tokens=800,
+    )
+    history = [
+        Message(role="assistant", text="Сейчас я не могу получить ответ от LLM. Проверь сервер.", message_type="text", chat_id=1),
+        Message(role="user", text="hello", message_type="text", chat_id=1),
+    ]
+
+    reply = await orchestrator.generate_reply(history)
+
+    assert reply == "reply"
+    assert llm.calls[0] == [
+        ChatMessage(role="system", content=BASIC_SYSTEM_PROMPT),
+        ChatMessage(role="user", content="hello"),
+    ]
+
+
 async def test_orchestrator_returns_fallback_for_empty_reply() -> None:
     llm = FakeLLMClient("   ")
     orchestrator = AgentOrchestrator(
@@ -55,3 +77,4 @@ async def test_orchestrator_returns_fallback_for_empty_reply() -> None:
     reply = await orchestrator.generate_reply([])
 
     assert reply == EMPTY_REPLY_FALLBACK
+

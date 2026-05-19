@@ -7,6 +7,7 @@ from app.database.repositories import (
     get_recent_diary_entries,
     save_message,
 )
+from app.llm.client import LLMResponseError
 from app.memory.diary import DiaryService
 from app.memory.schemas import DiaryEntryCreate, DiaryReflectionResult
 
@@ -19,6 +20,11 @@ class FakeSummarizer:
     async def summarize(self, messages, source_date):
         self.calls += 1
         return self.result
+
+
+class FailingSummarizer:
+    async def summarize(self, messages, source_date):
+        raise LLMResponseError("HTTP 400")
 
 
 async def add_message_set(session, count: int = 3):
@@ -40,6 +46,16 @@ async def add_message_set(session, count: int = 3):
 def make_service(result: DiaryReflectionResult, min_messages: int = 3) -> DiaryService:
     return DiaryService(
         summarizer=FakeSummarizer(result),
+        min_messages=min_messages,
+        max_messages=100,
+        lookback_hours=24,
+        skip_if_exists_for_date=True,
+    )
+
+
+def make_failing_service(min_messages: int = 3) -> DiaryService:
+    return DiaryService(
+        summarizer=FailingSummarizer(),
         min_messages=min_messages,
         max_messages=100,
         lookback_hours=24,
@@ -117,3 +133,18 @@ async def test_diary_service_empty_when_llm_returns_no_entries(session_factory) 
         )
 
         assert result.status == "empty"
+
+
+async def test_diary_service_uses_local_fallback_when_llm_fails(session_factory) -> None:
+    async with session_factory() as session:
+        user = await add_message_set(session, count=3)
+        result = await make_failing_service().create_daily_summary(
+            session,
+            user.id,
+            source_date=date(2026, 5, 16),
+        )
+        entries = await get_recent_diary_entries(session, user.id, limit=10)
+
+        assert result.status == "created"
+        assert result.created_count == 1
+        assert entries[0].title == "Conversation on 2026-05-16"

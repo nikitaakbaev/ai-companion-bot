@@ -46,13 +46,23 @@ def test_common_unknown_emotion_alias_is_normalized() -> None:
     assert decision.emotion == "caring"
 
 
-def test_common_action_alias_is_normalized() -> None:
-    decision = AgentDecision(action="reply", messages="ok", tool_input=None, delay_seconds=0.4)
+def test_cozy_emotion_alias_is_normalized() -> None:
+    decision = AgentDecision(action="send_message", messages=["ok"], emotion="cozy")
 
-    assert decision.action == AgentActionType.SEND_MESSAGE
-    assert decision.normalized_messages() == ["ok"]
-    assert decision.tool_input == {}
-    assert decision.delay_seconds == 0
+    assert decision.emotion == "caring"
+
+
+def test_similar_duplicate_messages_are_removed() -> None:
+    decision = AgentDecision(
+        action="send_message",
+        messages=[
+            "Привет-привет! Как ты?",
+            "Привет, привет. Как ты?",
+            "Что случилось?",
+        ],
+    )
+
+    assert decision.normalized_messages() == ["Привет-привет! Как ты?", "Что случилось?"]
 
 
 def test_service_json_leak_message_is_rejected() -> None:
@@ -63,18 +73,18 @@ def test_service_json_leak_message_is_rejected() -> None:
         )
 
 
+def test_json_field_names_in_messages_are_removed() -> None:
+    decision = AgentDecision(
+        action="send_message",
+        messages=["Привет", "tool_input", "emotion", "delay_seconds"],
+    )
+
+    assert decision.normalized_messages() == ["Привет"]
+
+
 def test_russian_service_json_leak_message_is_rejected() -> None:
     with pytest.raises(ValidationError):
         AgentDecision(
             action="send_message",
-            messages=["Спасибо, что исправил! Теперь я знаю, как надо!~"],
+            messages=["Вот исправленный валидный JSON, как вы просили"],
         )
-
-
-def test_service_leak_is_dropped_from_mixed_messages() -> None:
-    decision = AgentDecision(
-        action="send_message",
-        messages=["Спасибо, что исправил! Теперь я знаю, как надо!~", "Нормальный ответ."],
-    )
-
-    assert decision.normalized_messages() == ["Нормальный ответ."]

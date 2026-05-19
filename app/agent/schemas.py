@@ -2,11 +2,19 @@
 
 from enum import StrEnum
 import re
+from difflib import SequenceMatcher
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 MAX_AGENT_MESSAGE_LENGTH = 2000
+SERVICE_LEAK_EXACT_MESSAGES = {
+    "tool_input",
+    "emotion",
+    "delay_seconds",
+    "messages",
+    "thought",
+}
 SERVICE_LEAK_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -15,15 +23,11 @@ SERVICE_LEAK_PATTERNS = tuple(
         r"\bschema\b",
         r"\btool\b",
         r"\baction\b",
-        r"\bcorrect",
-        r"\bfixed\b",
         r"валидн",
         r"схем",
         r"формат",
-        r"исправ",
+        r"исправленн",
         r"служебн",
-        r"теперь\s+я\s+зна",
-        r"как\s+надо",
     )
 )
 
@@ -37,6 +41,7 @@ class AgentActionType(StrEnum):
     READ_DIARY = "read_diary"
     SLEEP = "sleep"
     TAKE_PHOTO = "take_photo"
+    UPDATE_IMAGE_BASE_PROMPT = "update_image_base_prompt"
     ANALYZE_IMAGE = "analyze_image"
 
 
@@ -61,28 +66,6 @@ class AgentDecision(BaseModel):
     emotion: AgentEmotion = AgentEmotion.NEUTRAL
     delay_seconds: int = Field(default=0, ge=0, le=60)
 
-    @field_validator("action", mode="before")
-    @classmethod
-    def normalize_action(cls, value: object) -> AgentActionType | str:
-        """Map common model-invented action labels to the supported set."""
-        if not isinstance(value, str):
-            return value
-
-        normalized = value.strip().lower()
-        aliases = {
-            "answer": AgentActionType.SEND_MESSAGE,
-            "message": AgentActionType.SEND_MESSAGE,
-            "reply": AgentActionType.SEND_MESSAGE,
-            "respond": AgentActionType.SEND_MESSAGE,
-            "send": AgentActionType.SEND_MESSAGE,
-            "chat": AgentActionType.SEND_MESSAGE,
-            "none": AgentActionType.IGNORE,
-            "no_reply": AgentActionType.IGNORE,
-            "skip": AgentActionType.IGNORE,
-            "photo": AgentActionType.TAKE_PHOTO,
-        }
-        return aliases.get(normalized, normalized)
-
     @field_validator("emotion", mode="before")
     @classmethod
     def normalize_emotion(cls, value: object) -> AgentEmotion | str:
@@ -98,6 +81,15 @@ class AgentDecision(BaseModel):
             "supportive": AgentEmotion.CARING,
             "calm": AgentEmotion.NEUTRAL,
             "curious": AgentEmotion.PLAYFUL,
+            "cozy": AgentEmotion.CARING,
+            "sleepy": AgentEmotion.CARING,
+            "warm": AgentEmotion.CARING,
+            "affectionate": AgentEmotion.CARING,
+            "shy": AgentEmotion.CARING,
+            "cute": AgentEmotion.HAPPY,
+            "excited": AgentEmotion.HAPPY,
+            "romantic": AgentEmotion.CARING,
+            "flirty": AgentEmotion.PLAYFUL,
         }
         return aliases.get(normalized, normalized)
 
@@ -107,8 +99,6 @@ class AgentDecision(BaseModel):
         """Drop empty messages and cap each message to Telegram-friendly length."""
         if value is None:
             return []
-        if isinstance(value, str):
-            value = [value]
         if not isinstance(value, list):
             raise ValueError("messages must be a list")
 
@@ -124,30 +114,6 @@ class AgentDecision(BaseModel):
             messages.append(text[:MAX_AGENT_MESSAGE_LENGTH])
         return messages
 
-    @field_validator("tool_input", mode="before")
-    @classmethod
-    def normalize_tool_input(cls, value: object) -> dict:
-        """Accept empty tool input variants returned by smaller local models."""
-        if value is None or value == "":
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError("tool_input must be an object")
-        return value
-
-    @field_validator("delay_seconds", mode="before")
-    @classmethod
-    def normalize_delay_seconds(cls, value: object) -> int | object:
-        """Coerce simple numeric delay variants to bounded whole seconds."""
-        if value is None or value == "":
-            return 0
-        if isinstance(value, str):
-            value = value.strip()
-        try:
-            numeric_value = float(value)
-        except (TypeError, ValueError):
-            return value
-        return max(0, min(60, round(numeric_value)))
-
     @model_validator(mode="after")
     def validate_action_payload(self) -> "AgentDecision":
         """Ensure send_message decisions have something to send."""
@@ -159,9 +125,37 @@ class AgentDecision(BaseModel):
 
     def normalized_messages(self) -> list[str]:
         """Return cleaned messages ready for Telegram."""
-        return [message.strip()[:MAX_AGENT_MESSAGE_LENGTH] for message in self.messages if message.strip()]
+        messages: list[str] = []
+        for message in self.messages:
+            text = message.strip()[:MAX_AGENT_MESSAGE_LENGTH]
+            if not text or _is_duplicate_message(text, messages):
+                continue
+            messages.append(text)
+        return messages
 
 
 def _looks_like_service_leak(text: str) -> bool:
     """Return whether a user-visible message leaked internal JSON/tool instructions."""
-    return any(pattern.search(text) for pattern in SERVICE_LEAK_PATTERNS)
+    normalized = text.strip().lower()
+    return normalized in SERVICE_LEAK_EXACT_MESSAGES or any(
+        pattern.search(text) for pattern in SERVICE_LEAK_PATTERNS
+    )
+
+
+def _is_duplicate_message(text: str, previous_messages: list[str]) -> bool:
+    normalized = _normalize_for_similarity(text)
+    if not normalized:
+        return True
+    for previous in previous_messages:
+        previous_normalized = _normalize_for_similarity(previous)
+        if normalized == previous_normalized:
+            return True
+        if SequenceMatcher(None, normalized, previous_normalized).ratio() >= 0.82:
+            return True
+    return False
+
+
+def _normalize_for_similarity(text: str) -> str:
+    lowered = text.casefold()
+    without_punctuation = re.sub(r"[^\w\sа-яёА-ЯЁ]", " ", lowered)
+    return " ".join(without_punctuation.split())

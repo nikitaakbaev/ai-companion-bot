@@ -19,6 +19,7 @@ dependencies = [
     "structlog",
     "orjson",
     "tenacity",
+    "telethon",
 ]
 
 [dependency-groups]
@@ -40,4 +41,3 @@ asyncio_mode = "auto"
 [tool.mypy]
 python_version = "3.11"
 strict = true
-
